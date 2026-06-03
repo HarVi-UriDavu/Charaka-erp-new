@@ -33,6 +33,7 @@ async function handleApi(req, res) {
     const state = store.snapshot();
     return sendJson(res, 200, { ...state, stockRows: store.stockRows(), daybook: store.daybook(url.searchParams.get("date") || undefined) });
   }
+  if (req.method === "POST" && url.pathname === "/api/login") return sendJson(res, 200, store.login(body));
   if (req.method === "POST" && url.pathname === "/api/patients") return sendJson(res, 201, store.addPatient(body, userId));
   if (req.method === "POST" && url.pathname === "/api/visits") return sendJson(res, 201, store.createVisit(body, userId));
   if (req.method === "PATCH" && url.pathname.startsWith("/api/visits/")) {

@@ -3,7 +3,7 @@ const INR = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR",
 const state = {
   data: null,
   route: "dashboard",
-  userId: localStorage.getItem("charaka.userId") || "U04",
+  userId: localStorage.getItem("charaka.userId") || "",
   selectedPatientId: null,
   selectedVisitId: null,
   pharmacyTab: "sales",
@@ -26,6 +26,10 @@ load();
 
 async function load() {
   state.data = await api("/api/state");
+  if (!state.userId) {
+    render();
+    return;
+  }
   const user = currentUser();
   const allowed = state.data.roles[user.role] || [];
   if (!allowed.includes(state.route)) state.route = allowed[0] || "dashboard";
@@ -45,6 +49,10 @@ async function api(url, options = {}) {
 }
 
 function render() {
+  if (!state.userId) {
+    renderLogin();
+    return;
+  }
   const user = currentUser();
   const allowed = state.data.roles[user.role] || [];
   app.innerHTML = `
@@ -60,7 +68,8 @@ function render() {
           <div><div class="clinic-name">${escapeHtml(state.data.meta.clinicName)}</div><div class="clinic-sub">${escapeHtml(state.data.meta.clinicSubtitle)}</div></div>
           <div class="date-pill">${new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</div>
           <div class="spacer"></div>
-          <select class="role-select" id="roleSelect">${state.data.users.map((u) => `<option value="${u.id}" ${u.id === state.userId ? "selected" : ""}>${escapeHtml(u.name)} - ${u.role}</option>`).join("")}</select>
+          <div class="date-pill">Signed in: ${escapeHtml(user.name)} - ${user.role}</div>
+          <button class="btn secondary" id="logoutBtn">Logout</button>
         </header>
         <main class="content">${routeHtml()}</main>
       </section>
@@ -76,10 +85,47 @@ function bindShell() {
     state.route = btn.dataset.route;
     render();
   }));
-  document.getElementById("roleSelect").addEventListener("change", (e) => {
-    state.userId = e.target.value;
-    localStorage.setItem("charaka.userId", state.userId);
-    load();
+  document.getElementById("logoutBtn").addEventListener("click", () => {
+    state.userId = "";
+    localStorage.removeItem("charaka.userId");
+    state.route = "dashboard";
+    render();
+  });
+}
+
+function renderLogin() {
+  const users = state.data?.users?.filter((u) => u.active) || [];
+  app.innerHTML = `
+    <div class="login-page">
+      <section class="login-panel">
+        <div class="brand" style="border:0;padding:0;height:auto;margin-bottom:18px">
+          <div class="mark">च</div>
+          <div><div class="brand-title">Charaka Clinic ERP</div><div class="brand-sub">Local clinic server login</div></div>
+        </div>
+        <h1>Sign in</h1>
+        <p class="hint">Choose your account and enter your PIN. Admin can add more accounts in Masters.</p>
+        <form id="loginForm" class="grid" style="margin-top:18px">
+          <div class="field"><label>Account</label><select name="userId">${users.map((u) => `<option value="${u.id}">${escapeHtml(u.name)} - ${u.role}</option>`).join("")}</select></div>
+          <div class="field"><label>PIN</label><input name="pin" type="password" inputmode="numeric" autocomplete="current-password" autofocus></div>
+          <button class="btn" type="submit">Sign in</button>
+        </form>
+        <p class="hint" style="margin-top:14px">Demo PINs: Doctor 1111, Reception 2222, Pharmacy 3333, Admin 4444.</p>
+      </section>
+    </div>
+    ${state.toast ? `<div class="toast"><strong>${escapeHtml(state.toast.title)}</strong><div class="muted">${escapeHtml(state.toast.body || "")}</div></div>` : ""}
+  `;
+  byId("loginForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const payload = formValues("loginForm");
+    try {
+      const session = await api("/api/login", { method: "POST", body: JSON.stringify(payload), headers: { "x-user-id": "" } });
+      state.userId = session.userId;
+      localStorage.setItem("charaka.userId", state.userId);
+      await load();
+      showToast("Signed in", `${session.name} - ${session.role}`);
+    } catch (error) {
+      showToast("Login failed", error.message);
+    }
   });
 }
 

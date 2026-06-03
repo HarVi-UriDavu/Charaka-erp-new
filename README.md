@@ -32,4 +32,11 @@ npm test
 - Pharmacy: `U03`
 - Admin: `U04`
 
-The top-right selector switches roles in this MVP.
+Default demo PINs:
+
+- Doctor: `1111`
+- Reception: `2222`
+- Pharmacy: `3333`
+- Admin: `4444`
+
+Admin can add more accounts from `Masters -> Users -> Add account`.

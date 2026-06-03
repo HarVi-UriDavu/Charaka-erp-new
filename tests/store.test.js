@@ -96,3 +96,13 @@ test("non-admin cannot manually change master data", () => {
     /Only admin/
   );
 });
+
+test("login accepts valid PIN and rejects invalid PIN", () => {
+  const store = tempStore();
+  const session = store.login({ userId: "U04", pin: "4444" });
+  assert.equal(session.role, "admin");
+  assert.throws(
+    () => store.login({ userId: "U04", pin: "1111" }),
+    /Invalid account or PIN/
+  );
+});

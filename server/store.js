@@ -56,6 +56,16 @@ export class ClinicStore {
     return user;
   }
 
+  login(input) {
+    const userId = required(input.userId, "userId");
+    const pin = String(input.pin || "");
+    const user = this.state.users.find((u) => u.id === userId && u.active);
+    if (!user || String(user.pin || "") !== pin) throw httpError(401, "Invalid account or PIN");
+    this.audit(user.id, "LOGIN", "user", user.id, {});
+    this.save();
+    return { userId: user.id, name: user.name, role: user.role };
+  }
+
   requireAdmin(userId) {
     const user = this.requireUser(userId);
     if (user.role !== "admin") throw httpError(403, "Only admin can change master data");
