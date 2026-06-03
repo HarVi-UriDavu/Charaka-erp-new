@@ -1,0 +1,35 @@
+# Charaka Clinic ERP
+
+Operations-first local clinic ERP MVP built from the prototype plan.
+
+## Included Workflows
+
+- Reception patient registry, search, OPD visit billing, receipts.
+- Doctor queue, vitals, prescriptions, printable prescription.
+- Pharmacy sales, purchases, batch stock, expiry/low-stock alerts, sales returns.
+- Unified billing daybook, CSV export, reports, audit log.
+- CSV imports for patients, services, drugs, suppliers, and opening stock.
+- Local backup action and Docker deployment files.
+
+## Start
+
+```bash
+npm start
+```
+
+Then open [http://localhost:4173](http://localhost:4173).
+
+## Test
+
+```bash
+npm test
+```
+
+## Demo Users
+
+- Doctor: `U01`
+- Reception: `U02`
+- Pharmacy: `U03`
+- Admin: `U04`
+
+The top-right selector switches roles in this MVP.

@@ -1,0 +1,30 @@
+services:
+  erp:
+    build: .
+    container_name: charaka-erp
+    restart: unless-stopped
+    ports:
+      - "4173:4173"
+    volumes:
+      - ./data:/app/data
+      - ./backups:/app/backups
+    environment:
+      - PORT=4173
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: charaka-postgres
+    restart: unless-stopped
+    profiles: ["postgres-target"]
+    environment:
+      POSTGRES_DB: charaka
+      POSTGRES_USER: charaka
+      POSTGRES_PASSWORD: change-me-before-clinic-use
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+
+volumes:
+  postgres-data:
