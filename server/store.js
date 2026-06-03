@@ -56,6 +56,12 @@ export class ClinicStore {
     return user;
   }
 
+  requireAdmin(userId) {
+    const user = this.requireUser(userId);
+    if (user.role !== "admin") throw httpError(403, "Only admin can change master data");
+    return user;
+  }
+
   addPatient(input, userId = "U04") {
     this.requireUser(userId);
     const seq = this.nextSeq("patient");
@@ -304,8 +310,114 @@ export class ClinicStore {
     }).sort((a, b) => a.drugName.localeCompare(b.drugName));
   }
 
+  addService(input, userId = "U04") {
+    this.requireAdmin(userId);
+    const id = input.id || `S${pad(this.state.services.length + 1, 2)}`;
+    const code = required(input.code || id, "code").toUpperCase();
+    if (this.state.services.some((s) => s.code.toUpperCase() === code)) throw httpError(409, "Service code already exists");
+    const service = {
+      id,
+      code,
+      name: required(input.name, "name"),
+      category: input.category || "OPD",
+      rate: money(input.rate),
+      gst: Number(input.gst) || 0,
+      active: input.active === false ? false : true
+    };
+    this.state.services.push(service);
+    this.audit(userId, "CREATE", "service", service.id, { code: service.code, rate: service.rate });
+    this.save();
+    return service;
+  }
+
+  addDrug(input, userId = "U04") {
+    this.requireAdmin(userId);
+    const id = input.id || `DR${pad(this.state.drugs.length + 1, 2)}`;
+    const name = required(input.name, "name");
+    if (this.state.drugs.some((d) => d.name.toLowerCase() === name.toLowerCase())) throw httpError(409, "Drug already exists");
+    const drug = {
+      id,
+      name,
+      form: input.form || "",
+      pack: input.pack || "",
+      hsn: input.hsn || "",
+      mrp: money(input.mrp),
+      gst: Number(input.gst) || 0,
+      reorderLevel: Number(input.reorderLevel) || 0,
+      active: input.active === false ? false : true
+    };
+    this.state.drugs.push(drug);
+    this.audit(userId, "CREATE", "drug", drug.id, { name: drug.name, mrp: drug.mrp });
+    this.save();
+    return drug;
+  }
+
+  addSupplier(input, userId = "U04") {
+    this.requireAdmin(userId);
+    const id = input.id || `SUP${pad(this.state.suppliers.length + 1, 2)}`;
+    const supplier = {
+      id,
+      name: required(input.name, "name"),
+      gstin: input.gstin || "",
+      phone: input.phone || "",
+      city: input.city || "",
+      active: input.active === false ? false : true
+    };
+    this.state.suppliers.push(supplier);
+    this.audit(userId, "CREATE", "supplier", supplier.id, { name: supplier.name });
+    this.save();
+    return supplier;
+  }
+
+  addUser(input, userId = "U04") {
+    this.requireAdmin(userId);
+    const role = required(input.role, "role");
+    if (!this.state.roles[role]) throw httpError(400, "Unknown role");
+    const id = input.id || `U${pad(this.state.users.length + 1, 2)}`;
+    const user = {
+      id,
+      name: required(input.name, "name"),
+      role,
+      pin: String(input.pin || "0000"),
+      active: input.active === false ? false : true
+    };
+    this.state.users.push(user);
+    this.audit(userId, "CREATE", "user", user.id, { role: user.role });
+    this.save();
+    return user;
+  }
+
+  addOpeningStock(input, userId = "U04") {
+    this.requireAdmin(userId);
+    const drug = this.state.drugs.find((d) => d.id === required(input.drugId, "drugId"));
+    if (!drug) throw httpError(404, "Drug not found");
+    const qty = Number(input.qty) || 0;
+    if (qty <= 0) throw httpError(400, "Opening stock qty must be positive");
+    let batch = this.state.drugBatches.find((b) => b.drugId === drug.id && b.batch === input.batch);
+    if (!batch) {
+      batch = {
+        id: `B${pad(this.state.drugBatches.length + 1, 3)}`,
+        drugId: drug.id,
+        batch: required(input.batch, "batch"),
+        expiry: required(input.expiry, "expiry"),
+        qty: 0,
+        purchaseRate: money(input.rate),
+        mrp: money(input.mrp || drug.mrp)
+      };
+      this.state.drugBatches.push(batch);
+    }
+    batch.qty += qty;
+    batch.expiry = input.expiry || batch.expiry;
+    batch.purchaseRate = money(input.rate || batch.purchaseRate);
+    batch.mrp = money(input.mrp || batch.mrp);
+    this.stockMove("OPENING", "manual", drug.id, batch.id, qty, "Manual opening stock");
+    this.audit(userId, "CREATE", "opening_stock", batch.id, { drugId: drug.id, batch: batch.batch, qty });
+    this.save();
+    return batch;
+  }
+
   importCsv(entity, csvText, userId = "U04") {
-    this.requireUser(userId);
+    this.requireAdmin(userId);
     const rows = parseCsv(csvText);
     const errors = [];
     let imported = 0;

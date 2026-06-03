@@ -74,3 +74,25 @@ test("CSV import records row errors", () => {
   assert.equal(job.imported, 1);
   assert.equal(job.failed, 1);
 });
+
+test("admin can manually add master data and opening stock", () => {
+  const store = tempStore();
+  const service = store.addService({ code: "XRAY", name: "X-ray review", category: "OPD", rate: 150, gst: 0 }, "U04");
+  const drug = store.addDrug({ name: "Test Drops", form: "Drops", pack: "10 ml", mrp: 42, gst: 12, reorderLevel: 5 }, "U04");
+  const supplier = store.addSupplier({ name: "Test Medicals", phone: "9876543210", city: "Guntur" }, "U04");
+  const user = store.addUser({ name: "Evening Reception", role: "reception", pin: "2468" }, "U04");
+  const batch = store.addOpeningStock({ drugId: drug.id, batch: "TST001", expiry: "2027-01-31", qty: 12, rate: 30, mrp: 42 }, "U04");
+  assert.equal(service.name, "X-ray review");
+  assert.equal(supplier.name, "Test Medicals");
+  assert.equal(user.role, "reception");
+  assert.equal(batch.qty, 12);
+  assert.ok(store.state.stockMovements.some((m) => m.kind === "OPENING" && m.batchId === batch.id));
+});
+
+test("non-admin cannot manually change master data", () => {
+  const store = tempStore();
+  assert.throws(
+    () => store.addDrug({ name: "Blocked Drug", mrp: 10 }, "U03"),
+    /Only admin/
+  );
+});

@@ -287,14 +287,23 @@ function mastersHtml() {
     services: simpleTable(data.services, ["code", "name", "category", "rate", "gst"]),
     drugs: simpleTable(data.drugs, ["name", "form", "pack", "hsn", "mrp", "gst", "reorderLevel"]),
     suppliers: simpleTable(data.suppliers, ["name", "gstin", "phone", "city"]),
-    users: simpleTable(data.users, ["name", "role", "active"])
+    users: simpleTable(data.users, ["name", "role", "active"]),
+    stock: stockTable(data.stockRows)
+  };
+  const addLabels = {
+    patients: "",
+    services: "Add service",
+    drugs: "Add drug",
+    suppliers: "Add supplier",
+    users: "Add account",
+    stock: "Add opening stock"
   };
   return `
     ${head("Masters", "Reference data and spreadsheet imports", `<div class="tabs">${Object.keys(tables).map((t) => `<button data-master-tab="${t}" class="${tab === t ? "active" : ""}">${title(t)}</button>`).join("")}</div>`)}
     <div class="page-body grid cols-2">
-      <section class="card"><div class="card-head"><h2>${title(tab)}</h2></div>${tables[tab]}</section>
+      <section class="card"><div class="card-head"><h2>${title(tab)}</h2>${addLabels[tab] ? `<button class="btn" id="addMasterBtn">${addLabels[tab]}</button>` : ""}</div>${tables[tab]}</section>
       <section class="card pad">
-        <h2>CSV import</h2><p class="hint">Paste CSV with headers. Supported entities: patients, services, drugs, suppliers, opening-stock.</p>
+        <h2>CSV import</h2><p class="hint">Paste CSV with headers, or use the manual add buttons on the left. Supported CSV entities: patients, services, drugs, suppliers, opening-stock.</p>
         <div class="grid" style="margin-top:12px">
           <div class="field"><label>Entity</label><select id="importEntity"><option value="patients">patients</option><option value="services">services</option><option value="drugs">drugs</option><option value="suppliers">suppliers</option><option value="opening-stock">opening-stock</option></select></div>
           <div class="field"><label>CSV</label><textarea id="importCsv" placeholder="firstName,lastName,dob,gender,mobile,guardianName&#10;Anu,Rao,2021-01-03,F,9876543219,Ramesh Rao"></textarea></div>
@@ -307,11 +316,55 @@ function mastersHtml() {
 
 function bindMasters() {
   document.querySelectorAll("[data-master-tab]").forEach((b) => b.addEventListener("click", () => { state.masterTab = b.dataset.masterTab; render(); }));
+  byId("addMasterBtn")?.addEventListener("click", () => openMasterDialog(state.masterTab));
   byId("runImport")?.addEventListener("click", async () => {
     const entity = byId("importEntity").value;
     const csv = byId("importCsv").value;
     const job = await mutate(`/api/import/${entity}`, { method: "POST", body: JSON.stringify({ csv }) }, "Import complete");
     if (job.failed) showToast("Import completed with errors", `${job.failed} rows failed. Check Reports/audit and latest job data.`);
+  });
+}
+
+function openMasterDialog(tab) {
+  const forms = {
+    services: {
+      title: "Add service",
+      endpoint: "/api/admin/services",
+      success: "Service added",
+      body: `<form id="masterForm" class="grid cols-2">${field("code", "Code", "text", true)}${field("name", "Service name", "text", true)}${field("category", "Category", "text", false, "OPD")}${field("rate", "Rate", "number", true, "0")}${field("gst", "GST %", "number", false, "0")}</form>`
+    },
+    drugs: {
+      title: "Add drug",
+      endpoint: "/api/admin/drugs",
+      success: "Drug added",
+      body: `<form id="masterForm" class="grid cols-2">${field("name", "Drug name", "text", true)}${field("form", "Form", "text", false, "Syrup")}${field("pack", "Pack", "text", false, "60 ml")}${field("hsn", "HSN", "text")}${field("mrp", "MRP", "number", true, "0")}${field("gst", "GST %", "number", false, "12")}${field("reorderLevel", "Low-stock alert qty", "number", false, "10")}</form>`
+    },
+    suppliers: {
+      title: "Add supplier",
+      endpoint: "/api/admin/suppliers",
+      success: "Supplier added",
+      body: `<form id="masterForm" class="grid cols-2">${field("name", "Supplier name", "text", true)}${field("gstin", "GSTIN", "text")}${field("phone", "Phone", "tel")}${field("city", "City", "text", false, "Guntur")}</form>`
+    },
+    users: {
+      title: "Add account",
+      endpoint: "/api/admin/users",
+      success: "Account added",
+      body: `<form id="masterForm" class="grid cols-2">${field("name", "Account name", "text", true)}<div class="field"><label>Role *</label><select name="role">${Object.keys(state.data.roles).map((r) => `<option value="${r}">${title(r)}</option>`).join("")}</select></div>${field("pin", "Temporary PIN", "text", false, "0000")}</form>`
+    },
+    stock: {
+      title: "Add opening stock",
+      endpoint: "/api/admin/opening-stock",
+      success: "Opening stock added",
+      body: `<form id="masterForm" class="grid cols-2"><div class="field"><label>Drug *</label><select name="drugId">${state.data.drugs.map((d) => `<option value="${d.id}">${escapeHtml(d.name)}</option>`).join("")}</select></div>${field("batch", "Batch", "text", true)}${field("expiry", "Expiry", "date", true)}${field("qty", "Quantity", "number", true, "1")}${field("rate", "Purchase rate", "number", true, "0")}${field("mrp", "MRP", "number", false, "0")}</form>`
+    }
+  };
+  const config = forms[tab];
+  if (!config) return;
+  openDialog(config.title, config.body, `<button class="btn secondary" data-close>Cancel</button><button class="btn" id="saveMaster">Save</button>`);
+  byId("saveMaster").addEventListener("click", async () => {
+    const payload = formValues("masterForm");
+    await mutate(config.endpoint, { method: "POST", body: JSON.stringify(payload) }, config.success);
+    closeDialog();
   });
 }
 
