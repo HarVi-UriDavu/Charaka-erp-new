@@ -245,7 +245,7 @@ function bindClinical() {
   byId("saveClinical")?.addEventListener("click", async () => {
     const id = state.selectedVisitId;
     const payload = {
-      status: byId("visitStatus").value,
+      status: "done",
       notes: byId("clinicalNotes").value,
       vitals: formValues("clinicalVitals"),
       prescription: [...document.querySelectorAll("[data-rx-row]")].map((row) => ({
@@ -273,13 +273,19 @@ function pharmacyHtml() {
 function bindPharmacy() {
   document.querySelectorAll("[data-pharm-tab]").forEach((b) => b.addEventListener("click", () => { state.pharmacyTab = b.dataset.pharmTab; render(); }));
   byId("newSaleBtn")?.addEventListener("click", openSaleDialog);
+  document.querySelectorAll("[data-fill-rx]").forEach((b) => b.addEventListener("click", () => openSaleDialog(b.dataset.fillRx)));
   byId("newPurchaseBtn")?.addEventListener("click", openPurchaseDialog);
   byId("newReturnBtn")?.addEventListener("click", openReturnDialog);
   document.querySelectorAll("[data-print-sale]").forEach((b) => b.addEventListener("click", () => openReceipt("sale", b.dataset.printSale)));
 }
 
 function pharmacySalesHtml() {
-  return `<section class="card"><div class="card-head"><h2>Pharmacy sales</h2><button class="btn" id="newSaleBtn">New sale</button></div>${salesTable(state.data.pharmacySales)}</section>`;
+  const dispensed = new Set(state.data.pharmacySales.map((s) => s.linkedVisitId).filter(Boolean));
+  const pending = state.data.visits.filter((v) => v.prescription?.length && !dispensed.has(v.id));
+  return `<div class="grid">
+    ${pending.length ? `<section class="card"><div class="card-head"><h2>Pending prescriptions</h2></div><table><thead><tr><th>Visit</th><th>Patient</th><th>Medicines</th><th></th></tr></thead><tbody>${pending.map((v) => `<tr><td class="mono">${v.voucherNo}</td><td>${patientName(v.patientId)}</td><td>${v.prescription.map((r) => escapeHtml(r.name)).join(", ")}</td><td class="right"><button class="btn" data-fill-rx="${v.id}">Fill Rx</button></td></tr>`).join("")}</tbody></table></section>` : ""}
+    <section class="card"><div class="card-head"><h2>Pharmacy sales</h2><button class="btn" id="newSaleBtn">New sale</button></div>${salesTable(state.data.pharmacySales)}</section>
+  </div>`;
 }
 
 function purchasesHtml() {
@@ -297,12 +303,13 @@ function returnsHtml() {
 function billingHtml() {
   const date = getValue("billingDate", new Date().toISOString().slice(0, 10));
   const rows = state.data.invoices.filter((i) => i.date.slice(0, 10) === date);
+  const total = rows.reduce((s, r) => s + (r.total || 0), 0);
   const cash = rows.reduce((s, r) => s + (r.paid.cash || 0), 0);
   const upi = rows.reduce((s, r) => s + (r.paid.upi || 0), 0);
   return `
     ${head("Billing", "Unified OPD and pharmacy ledger", `<input type="date" id="billingDate" value="${date}"><a class="btn secondary" href="/api/export/daybook.csv?date=${date}">Export CSV</a>`)}
     <div class="page-body grid">
-      <div class="grid cols-3">${stat("Total", rupee(cash + upi), `${rows.length} invoices`)}${stat("Cash", rupee(cash), "collected")}${stat("UPI", rupee(upi), "collected")}</div>
+      <div class="grid cols-3">${stat("Total", rupee(total), `${rows.length} invoices`)}${stat("Cash", rupee(cash), "collected")}${stat("UPI", rupee(upi), "collected")}</div>
       <section class="card">${invoiceTable(rows)}</section>
     </div>`;
 }
@@ -488,18 +495,60 @@ function openVisitDialog(patientId) {
   });
 }
 
-function openSaleDialog() {
+function openSaleDialog(prefillVisitId = "") {
+  const prefillVisit = state.data.visits.find((v) => v.id === prefillVisitId);
   openDialog("New pharmacy sale", `
     <form id="saleForm" class="grid">
       <div class="grid cols-2">
-        <div class="field"><label>Patient optional</label><select name="patientId"><option value="">Walk-in</option>${state.data.patients.map((p) => `<option value="${p.id}">${escapeHtml(p.firstName)} ${escapeHtml(p.lastName)} - ${p.uhid}</option>`).join("")}</select></div>
-        <div class="field"><label>Linked visit optional</label><select name="linkedVisitId"><option value="">None</option>${state.data.visits.filter((v) => v.prescription?.length).map((v) => `<option value="${v.id}">${v.voucherNo} - ${patientName(v.patientId)}</option>`).join("")}</select></div>
+        <div class="field"><label>Patient optional</label><select name="patientId"><option value="">Walk-in</option>${state.data.patients.map((p) => `<option value="${p.id}" ${prefillVisit?.patientId === p.id ? "selected" : ""}>${escapeHtml(p.firstName)} ${escapeHtml(p.lastName)} - ${p.uhid}</option>`).join("")}</select></div>
+        <div class="field"><label>Linked visit optional</label><select name="linkedVisitId"><option value="">None</option>${state.data.visits.filter((v) => v.prescription?.length).map((v) => `<option value="${v.id}" ${prefillVisitId === v.id ? "selected" : ""}>${v.voucherNo} - ${patientName(v.patientId)}</option>`).join("")}</select></div>
       </div>
-      <div id="saleRows">${saleRowHtml()}</div>
+      <div id="saleRows">${prefillVisit?.prescription?.length ? prefillVisit.prescription.map((r) => saleRowHtml(r)).join("") : saleRowHtml()}</div>
       <button type="button" class="btn secondary" id="addSaleRow">Add line</button>
+      <div class="card pad"><div class="toolbar" style="justify-content:space-between"><div><div class="stat-label">Pharmacy payable</div><div class="stat-value" id="saleTotal">₹0</div></div><div class="toolbar"><button type="button" class="btn secondary" id="saleAllCash">All cash</button><button type="button" class="btn secondary" id="saleAllUpi">All UPI</button></div></div></div>
       <div class="grid cols-2">${field("cash", "Cash", "number", false, "0")}${field("upi", "UPI", "number", false, "0")}</div>
     </form>`, `<button class="btn secondary" data-close>Cancel</button><button class="btn" id="saveSale">Save sale</button>`);
-  byId("addSaleRow").addEventListener("click", () => byId("saleRows").insertAdjacentHTML("beforeend", saleRowHtml()));
+  const recalcSale = () => {
+    const total = currentSaleTotal();
+    byId("saleTotal").textContent = rupee(total);
+    return total;
+  };
+  const bindSaleRows = () => {
+    byId("saleRows").querySelectorAll("[data-sale-row]").forEach((row) => {
+      row.querySelector("[name=drugId]").addEventListener("change", (event) => {
+        row.querySelector("[name=batchId]").innerHTML = batchOptionsHtml(event.target.value);
+        recalcSale();
+      });
+      row.querySelectorAll("select,input").forEach((el) => el.addEventListener("change", recalcSale));
+    });
+    recalcSale();
+  };
+  byId("addSaleRow").addEventListener("click", () => {
+    byId("saleRows").insertAdjacentHTML("beforeend", saleRowHtml());
+    bindSaleRows();
+  });
+  byId("saleAllCash").addEventListener("click", () => {
+    const total = recalcSale();
+    byId("saleForm").cash.value = total;
+    byId("saleForm").upi.value = 0;
+  });
+  byId("saleAllUpi").addEventListener("click", () => {
+    const total = recalcSale();
+    byId("saleForm").cash.value = 0;
+    byId("saleForm").upi.value = total;
+  });
+  byId("saleForm").linkedVisitId.addEventListener("change", (event) => {
+    const visit = state.data.visits.find((v) => v.id === event.target.value);
+    if (!visit) return;
+    byId("saleForm").patientId.value = visit.patientId || "";
+    byId("saleRows").innerHTML = visit.prescription?.length
+      ? visit.prescription.map((r) => saleRowHtml(r)).join("")
+      : saleRowHtml();
+    bindSaleRows();
+    byId("saleAllCash").click();
+  });
+  bindSaleRows();
+  if (prefillVisit) byId("saleAllCash").click();
   byId("saveSale").addEventListener("click", async () => {
     const form = byId("saleForm");
     const items = [...form.querySelectorAll("[data-sale-row]")].map((row) => ({ drugId: row.querySelector("[name=drugId]").value, batchId: row.querySelector("[name=batchId]").value, qty: row.querySelector("[name=qty]").value }));
@@ -585,9 +634,25 @@ function patientListItem(p, active) { return `<button class="list-item ${active 
 function patientText(p) { return `${p.uhid} ${p.firstName} ${p.lastName} ${p.mobile} ${p.guardian.name}`.toLowerCase(); }
 function visitQueueItem(v, active) { const p = state.data.patients.find((x) => x.id === v.patientId); return `<button class="list-item ${active ? "active" : ""}" data-visit="${v.id}"><strong>${patientName(v.patientId)}</strong> <span class="badge ${v.status === "done" ? "green" : v.status === "waiting" ? "amber" : "teal"}">${v.status}</span><div class="hint mono">${v.voucherNo}</div><div class="hint">${p ? age(p.dob) : ""} - ${fmtTime(v.date)} - ${rupee(v.total)}</div></button>`; }
 function queueTable(rows) { return rows.length ? `<table><thead><tr><th>Patient</th><th>Status</th><th>Time</th></tr></thead><tbody>${rows.map((v) => `<tr><td>${patientName(v.patientId)}<div class="hint mono">${v.voucherNo}</div></td><td><span class="badge amber">${v.status}</span></td><td>${fmtTime(v.date)}</td></tr>`).join("")}</tbody></table>` : empty("No active queue"); }
-function clinicalFormHtml(v) { return `<h2>${patientName(v.patientId)} <span class="badge ${v.status === "done" ? "green" : "teal"}">${v.status}</span></h2><p class="hint mono">${v.voucherNo}</p><form id="clinicalVitals" class="grid cols-4" style="margin-top:14px">${field("wt", "Weight kg", "number", false, v.vitals?.wt || "")}${field("ht", "Height cm", "number", false, v.vitals?.ht || "")}${field("temp", "Temp F", "number", false, v.vitals?.temp || "")}${field("pulse", "Pulse", "number", false, v.vitals?.pulse || "")}</form><div class="field" style="margin-top:12px"><label>Notes</label><textarea id="clinicalNotes">${escapeHtml(v.notes || "")}</textarea></div><div class="toolbar" style="margin-top:14px"><h3>Prescription</h3><button class="btn secondary" id="addRx">Add drug</button></div><div id="rxRows" class="grid">${(v.prescription || []).map(rxRowHtml).join("") || rxRowHtml({})}</div><div class="toolbar" style="margin-top:14px"><select id="visitStatus" style="width:auto"><option value="in-consult" ${v.status === "in-consult" ? "selected" : ""}>In consult</option><option value="done" ${v.status === "done" ? "selected" : ""}>Done</option><option value="waiting" ${v.status === "waiting" ? "selected" : ""}>Waiting</option></select><button class="btn" id="saveClinical">Save clinical</button><button class="btn secondary" id="printPrescription">Print prescription</button></div>`; }
+function clinicalFormHtml(v) { return `<h2>${patientName(v.patientId)} <span class="badge ${v.status === "done" ? "green" : "teal"}">${v.status}</span></h2><p class="hint mono">${v.voucherNo}</p><form id="clinicalVitals" class="grid cols-4" style="margin-top:14px">${field("wt", "Weight kg", "number", false, v.vitals?.wt || "")}${field("ht", "Height cm", "number", false, v.vitals?.ht || "")}${field("temp", "Temp F", "number", false, v.vitals?.temp || "")}${field("pulse", "Pulse", "number", false, v.vitals?.pulse || "")}</form><div class="field" style="margin-top:12px"><label>Notes</label><textarea id="clinicalNotes">${escapeHtml(v.notes || "")}</textarea></div><div class="toolbar" style="margin-top:14px"><h3>Prescription</h3><button class="btn secondary" id="addRx">Add drug</button></div><div id="rxRows" class="grid">${(v.prescription || []).map(rxRowHtml).join("") || rxRowHtml({})}</div><div class="toolbar" style="margin-top:14px"><button class="btn" id="saveClinical">Save clinical & mark done</button><button class="btn secondary" id="printPrescription">Print prescription</button></div>`; }
 function rxRowHtml(r = {}) { return `<div data-rx-row class="grid cols-5"><div class="field"><label>Drug</label><select name="drugId"><option value="">Text only</option>${state.data.drugs.map((d) => `<option value="${d.id}" ${r.drugId === d.id ? "selected" : ""}>${escapeHtml(d.name)}</option>`).join("")}</select></div><div class="field"><label>Dose</label><input name="dose" value="${escapeHtml(r.dose || "")}"></div><div class="field"><label>Frequency</label><input name="frequency" value="${escapeHtml(r.frequency || "")}"></div><div class="field"><label>Days</label><input name="days" type="number" value="${r.days || ""}"></div><div class="field"><label>Qty</label><input name="qty" type="number" value="${r.qty || 1}"></div></div>`; }
-function saleRowHtml() { return `<div data-sale-row class="grid cols-3" style="margin-bottom:10px"><div class="field"><label>Drug</label><select name="drugId">${state.data.drugs.map((d) => `<option value="${d.id}">${escapeHtml(d.name)}</option>`).join("")}</select></div><div class="field"><label>Batch</label><select name="batchId">${state.data.stockRows.filter((b) => b.qty > 0).map((b) => `<option value="${b.id}">${escapeHtml(b.drugName)} - ${b.batch} - ${b.qty} left - exp ${fmtDate(b.expiry)}</option>`).join("")}</select></div><div class="field"><label>Qty</label><input name="qty" type="number" value="1" min="1"></div></div>`; }
+function saleRowHtml(row = {}) {
+  const selectedDrugId = row.drugId || state.data.drugs[0]?.id || "";
+  return `<div data-sale-row class="grid cols-3" style="margin-bottom:10px"><div class="field"><label>Drug</label><select name="drugId">${state.data.drugs.map((d) => `<option value="${d.id}" ${selectedDrugId === d.id ? "selected" : ""}>${escapeHtml(d.name)}</option>`).join("")}</select></div><div class="field"><label>Batch</label><select name="batchId">${batchOptionsHtml(selectedDrugId, row.batchId)}</select></div><div class="field"><label>Qty</label><input name="qty" type="number" value="${row.qty || 1}" min="1"></div></div>`;
+}
+function batchOptionsHtml(drugId, selectedBatchId = "") {
+  return state.data.stockRows
+    .filter((b) => b.qty > 0 && (!drugId || b.drugId === drugId))
+    .map((b) => `<option value="${b.id}" ${selectedBatchId === b.id ? "selected" : ""}>${escapeHtml(b.drugName)} - ${b.batch} - ${b.qty} left - exp ${fmtDate(b.expiry)}</option>`)
+    .join("");
+}
+function currentSaleTotal() {
+  return [...byId("saleRows").querySelectorAll("[data-sale-row]")].reduce((total, row) => {
+    const batch = state.data.stockRows.find((b) => b.id === row.querySelector("[name=batchId]").value);
+    const qty = Number(row.querySelector("[name=qty]").value) || 0;
+    return total + (batch?.mrp || 0) * qty;
+  }, 0);
+}
 function purchaseRowHtml() { return `<div data-purchase-row class="grid cols-6" style="margin-bottom:10px"><div class="field"><label>Drug</label><select name="drugId">${state.data.drugs.map((d) => `<option value="${d.id}">${escapeHtml(d.name)}</option>`).join("")}</select></div><div class="field"><label>Batch</label><input name="batch" required></div><div class="field"><label>Expiry</label><input name="expiry" type="date" required></div><div class="field"><label>Qty</label><input name="qty" type="number" value="1"></div><div class="field"><label>Rate</label><input name="rate" type="number" value="0"></div><div class="field"><label>MRP</label><input name="mrp" type="number" value="0"></div></div>`; }
 function invoiceTable(rows) { return rows.length ? `<table><thead><tr><th>Voucher</th><th>Kind</th><th>Party</th><th>Date</th><th class="right">Cash</th><th class="right">UPI</th><th class="right">Total</th></tr></thead><tbody>${rows.map((r) => `<tr><td class="mono">${r.voucherNo}</td><td><span class="badge teal">${r.kind}</span></td><td>${patientName(r.partyId) || "Walk-in"}</td><td>${fmtDateTime(r.date)}</td><td class="right mono">${r.paid?.cash ? rupee(r.paid.cash) : "-"}</td><td class="right mono">${r.paid?.upi ? rupee(r.paid.upi) : "-"}</td><td class="right mono"><strong>${rupee(r.total)}</strong></td></tr>`).join("")}</tbody></table>` : empty("No invoices"); }
 function visitTable(rows) { return rows.length ? `<table><thead><tr><th>Voucher</th><th>Date</th><th>Status</th><th class="right">Total</th><th></th></tr></thead><tbody>${rows.map((v) => `<tr><td class="mono">${v.voucherNo}</td><td>${fmtDateTime(v.date)}</td><td><span class="badge">${v.status}</span></td><td class="right">${rupee(v.total)}</td><td class="right"><button class="btn secondary" data-print-visit="${v.id}">Print</button></td></tr>`).join("")}</tbody></table>` : empty("No visits yet"); }

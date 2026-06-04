@@ -39,6 +39,36 @@ test("pharmacy sale decrements selected batch stock", () => {
   assert.ok(store.state.stockMovements.some((m) => m.refId === sale.id && m.qty === -2));
 });
 
+test("clinical save marks visit done automatically", () => {
+  const store = tempStore();
+  const visit = store.createVisit({
+    patientId: "P001",
+    doctorId: "D01",
+    items: [{ serviceId: "S01", qty: 1 }],
+    payment: { cash: 400, upi: 0 }
+  }, "U02");
+  const updated = store.updateVisitClinical(visit.id, {
+    status: "in-consult",
+    notes: "Prescription entered",
+    prescription: [{ drugId: "DR01", dose: "5 ml", frequency: "TID", days: 3, qty: 1 }]
+  }, "U01");
+  assert.equal(updated.status, "done");
+  assert.equal(updated.prescription.length, 1);
+});
+
+test("pharmacy sale rejects overpayment", () => {
+  const store = tempStore();
+  const batch = store.state.drugBatches.find((b) => b.drugId === "DR02");
+  assert.throws(
+    () => store.createPharmacySale({
+      patientId: "P001",
+      items: [{ drugId: "DR02", batchId: batch.id, qty: 1 }],
+      payment: { cash: 400, upi: 0 }
+    }, "U03"),
+    /Payment is more than total/
+  );
+});
+
 test("purchase increases existing or new batch stock", () => {
   const store = tempStore();
   const purchase = store.createPurchase({

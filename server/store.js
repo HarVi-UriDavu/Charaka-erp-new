@@ -137,7 +137,7 @@ export class ClinicStore {
     this.requireUser(userId);
     const visit = this.state.visits.find((v) => v.id === id);
     if (!visit) throw httpError(404, "Visit not found");
-    visit.status = input.status || "in-consult";
+    visit.status = "done";
     visit.vitals = { ...visit.vitals, ...normalizeVitals(input.vitals || {}) };
     visit.notes = input.notes || "";
     visit.prescription = (input.prescription || []).filter((r) => r.name || r.drugId).map((r) => ({
@@ -510,6 +510,7 @@ function normalizePayment(payment = {}, total) {
   const cash = money(payment.cash || 0);
   const upi = money(payment.upi || 0);
   if (cash + upi + 0.01 < total) throw httpError(400, "Payment is less than total");
+  if (cash + upi > total + 0.01) throw httpError(400, "Payment is more than total");
   const mode = cash > 0 && upi > 0 ? "Mixed" : cash > 0 ? "Cash" : "UPI";
   return { mode, cash, upi };
 }
