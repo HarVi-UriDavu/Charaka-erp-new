@@ -167,3 +167,59 @@ test("non-admin cannot update clinic receipt settings", () => {
     /Only admin/
   );
 });
+
+test("admin can add pediatric dosing rules", () => {
+  const store = tempStore();
+  const rule = store.addDosingRule({
+    drugId: "DR01",
+    indication: "Fever",
+    route: "Oral",
+    dosePerKg: 15,
+    doseUnit: "mg",
+    frequency: "every 6 hours",
+    days: 3,
+    maxDose: 500,
+    formulationStrength: 120,
+    formulationUnit: "mg",
+    formulationVolumeMl: 5,
+    source: "Doctor-approved licensed pediatric formulary"
+  }, "U04");
+  assert.match(rule.id, /^DRULE/);
+  assert.equal(rule.drugId, "DR01");
+  assert.equal(rule.dosePerKg, 15);
+  assert.equal(rule.frequency, "every 6 hours");
+});
+
+test("non-admin cannot add pediatric dosing rules", () => {
+  const store = tempStore();
+  assert.throws(
+    () => store.addDosingRule({ drugId: "DR01", dosePerKg: 10, frequency: "BD", source: "Blocked" }, "U03"),
+    /Only admin/
+  );
+});
+
+test("clinical prescription keeps dosing suggestion metadata", () => {
+  const store = tempStore();
+  const visit = store.createVisit({
+    patientId: "P001",
+    doctorId: "D01",
+    vitals: { wt: 18 },
+    items: [{ serviceId: "S01", qty: 1 }],
+    payment: { cash: 400, upi: 0 }
+  }, "U02");
+  const updated = store.updateVisitClinical(visit.id, {
+    prescription: [{
+      drugId: "DR01",
+      indication: "Fever",
+      dose: "270 mg / approx 11.3 ml",
+      frequency: "every 6 hours",
+      days: 3,
+      qty: 1,
+      dosingRuleId: "DRULE0001",
+      suggestedDose: "270 mg / approx 11.3 ml",
+      suggestionSource: "Doctor-approved licensed pediatric formulary"
+    }]
+  }, "U01");
+  assert.equal(updated.prescription[0].dosingRuleId, "DRULE0001");
+  assert.equal(updated.prescription[0].suggestionSource, "Doctor-approved licensed pediatric formulary");
+});

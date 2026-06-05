@@ -30,6 +30,8 @@ export class ClinicStore {
     const data = JSON.parse(fs.readFileSync(this.file, "utf8"));
     const seed = createSeedData();
     data.meta = { ...seed.meta, ...(data.meta || {}) };
+    data.sequences = { ...seed.sequences, ...(data.sequences || {}) };
+    data.dosingRules = data.dosingRules || [];
     if (!data.meta.gstin) data.meta.gstin = seed.meta.gstin;
     if (!data.meta.drugLicenseNo20) data.meta.drugLicenseNo20 = seed.meta.drugLicenseNo20;
     if (!data.meta.drugLicenseNo21) data.meta.drugLicenseNo21 = seed.meta.drugLicenseNo21;
@@ -177,7 +179,11 @@ export class ClinicStore {
       dose: r.dose || "",
       frequency: r.frequency || "",
       days: Number(r.days) || 0,
-      qty: Number(r.qty) || 1
+      qty: Number(r.qty) || 1,
+      indication: r.indication || "",
+      dosingRuleId: r.dosingRuleId || "",
+      suggestedDose: r.suggestedDose || "",
+      suggestionSource: r.suggestionSource || ""
     }));
     this.audit(userId, "UPDATE", "visit", visit.id, { status: visit.status, rx: visit.prescription.length });
     this.save();
@@ -455,6 +461,39 @@ export class ClinicStore {
     this.audit(userId, "CREATE", "opening_stock", batch.id, { drugId: drug.id, batch: batch.batch, qty });
     this.save();
     return batch;
+  }
+
+  addDosingRule(input, userId = "U04") {
+    this.requireAdmin(userId);
+    const drug = this.state.drugs.find((d) => d.id === required(input.drugId, "drugId"));
+    if (!drug) throw httpError(404, "Drug not found");
+    const dosePerKg = Number(input.dosePerKg) || 0;
+    if (dosePerKg <= 0) throw httpError(400, "Dose per kg must be positive");
+    const rule = {
+      id: `DRULE${pad(this.nextSeq("dosingRule"), 4)}`,
+      drugId: drug.id,
+      indication: input.indication || "",
+      route: input.route || "Oral",
+      dosePerKg: money(dosePerKg),
+      doseUnit: input.doseUnit || "mg",
+      frequency: required(input.frequency, "frequency"),
+      days: Number(input.days) || 0,
+      maxDose: money(input.maxDose || 0),
+      maxDailyDose: money(input.maxDailyDose || 0),
+      minAgeMonths: Number(input.minAgeMonths) || 0,
+      maxAgeMonths: Number(input.maxAgeMonths) || 0,
+      minWeightKg: Number(input.minWeightKg) || 0,
+      maxWeightKg: Number(input.maxWeightKg) || 0,
+      formulationStrength: money(input.formulationStrength || 0),
+      formulationUnit: input.formulationUnit || "mg",
+      formulationVolumeMl: money(input.formulationVolumeMl || 0),
+      source: required(input.source, "source"),
+      active: input.active === false ? false : true
+    };
+    this.state.dosingRules.push(rule);
+    this.audit(userId, "CREATE", "dosing_rule", rule.id, { drugId: drug.id, dosePerKg: rule.dosePerKg, frequency: rule.frequency });
+    this.save();
+    return rule;
   }
 
   importCsv(entity, csvText, userId = "U04") {

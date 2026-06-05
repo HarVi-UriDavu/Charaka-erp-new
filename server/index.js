@@ -48,6 +48,7 @@ async function handleApi(req, res) {
   if (req.method === "POST" && url.pathname === "/api/admin/suppliers") return sendJson(res, 201, store.addSupplier(body, userId));
   if (req.method === "POST" && url.pathname === "/api/admin/users") return sendJson(res, 201, store.addUser(body, userId));
   if (req.method === "POST" && url.pathname === "/api/admin/opening-stock") return sendJson(res, 201, store.addOpeningStock(body, userId));
+  if (req.method === "POST" && url.pathname === "/api/admin/dosing-rules") return sendJson(res, 201, store.addDosingRule(body, userId));
   if (req.method === "PATCH" && url.pathname === "/api/settings/clinic") return sendJson(res, 200, store.updateClinicSettings(body, userId));
   if (req.method === "POST" && url.pathname.startsWith("/api/import/")) {
     const entity = url.pathname.split("/").at(-1);

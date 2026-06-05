@@ -40,7 +40,8 @@ export function createSeedData() {
       invoice: 200,
       audit: 1,
       stock: 1,
-      importJob: 1
+      importJob: 1,
+      dosingRule: 1
     },
     roles: {
       doctor: ["dashboard", "clinical", "reception", "reports"],
@@ -173,6 +174,7 @@ export function createSeedData() {
     pharmacySales: [],
     purchases: [],
     returns: [],
+    dosingRules: [],
     stockMovements: [
       { id: "SM001", date: iso(addDays(-1)), kind: "OPENING", refId: "seed", drugId: "DR01", batchId: "B001", qty: 38, note: "Opening stock" },
       { id: "SM002", date: iso(addDays(-1)), kind: "OPENING", refId: "seed", drugId: "DR02", batchId: "B002", qty: 14, note: "Opening stock" },
