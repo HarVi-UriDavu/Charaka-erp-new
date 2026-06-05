@@ -24,6 +24,9 @@ export function createSeedData() {
       address: "D.No 5-21-7, Kothapet Main Road, Guntur - 522001",
       phone: "+91 863 222 4477",
       email: "charaka.clinic@gmail.com",
+      gstin: "37AHDPT3692H1ZW",
+      drugLicenseNo20: "RLF20AP2025001241",
+      drugLicenseNo21: "RFL21AP2025001236",
       regNo: "AP/GNT/PVT/2009/00342",
       financialYear: "26",
       createdAt: iso(new Date())

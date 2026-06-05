@@ -597,16 +597,76 @@ function openReceipt(kind, id) {
   const record = kind === "sale" ? state.data.pharmacySales.find((s) => s.id === id) : state.data.visits.find((v) => v.id === id);
   if (!record) return;
   const patient = record.patientId ? state.data.patients.find((p) => p.id === record.patientId) : null;
-  const items = kind === "prescription" ? record.prescription || [] : record.items || [];
-  openDialog(kind === "prescription" ? "Prescription" : "Receipt", `
-    <div class="receipt">
-      <h2>${escapeHtml(state.data.meta.clinicName)}</h2>
-      <p class="small muted" style="text-align:center">${escapeHtml(state.data.meta.clinicSubtitle)}<br>${escapeHtml(state.data.meta.address)} - ${escapeHtml(state.data.meta.phone)}</p>
-      <hr>
-      <div class="grid cols-2 small"><div><strong>${kind === "prescription" ? "Visit" : "Voucher"}:</strong> ${record.voucherNo}</div><div class="right"><strong>Date:</strong> ${fmtDate(record.date)}</div>${patient ? `<div><strong>Patient:</strong> ${escapeHtml(patient.firstName)} ${escapeHtml(patient.lastName)}</div><div class="right"><strong>UHID:</strong> ${patient.uhid}</div>` : ""}</div>
-      <table style="margin-top:14px"><thead><tr><th>Name</th><th class="right">Qty/Days</th><th class="right">${kind === "prescription" ? "Dose" : "Rate"}</th></tr></thead><tbody>${items.map((it) => `<tr><td>${escapeHtml(it.name)}</td><td class="right">${it.qty || it.days || ""}</td><td class="right">${kind === "prescription" ? escapeHtml([it.dose, it.frequency].filter(Boolean).join(" ")) : rupee(it.rate)}</td></tr>`).join("")}</tbody></table>
-      ${kind !== "prescription" ? `<h2 class="right" style="margin-top:18px">Total ${rupee(record.total)}</h2>` : `<p style="margin-top:18px"><strong>Notes:</strong> ${escapeHtml(record.notes || "")}</p>`}
-    </div>`, `<button class="btn secondary" data-close>Close</button><button class="btn" onclick="window.print()">Print</button>`);
+  let body = "";
+  if (kind === "sale") body = pharmacyReceiptHtml(record, patient);
+  else if (kind === "prescription") body = prescriptionReceiptHtml(record, patient);
+  else body = opdReceiptHtml(record, patient);
+  openDialog(kind === "sale" ? "Pharmacy tax invoice" : kind === "prescription" ? "Prescription" : "OPD receipt", body, `<button class="btn secondary" data-close>Close</button><button class="btn" onclick="window.print()">Print</button>`);
+}
+
+function receiptHeader(title) {
+  const m = state.data.meta;
+  return `<div class="print-header">
+    <div class="print-meta">GSTIN: ${escapeHtml(m.gstin || "")}</div>
+    <div class="print-title">${title}</div>
+    <div class="print-meta right">${m.drugLicenseNo20 ? `D.L.No: ${escapeHtml(m.drugLicenseNo20)}<br>D.L.No: ${escapeHtml(m.drugLicenseNo21 || "")}` : ""}</div>
+    <div class="print-clinic">${escapeHtml(m.clinicName).toUpperCase()} CHILDRENS CLINIC</div>
+    <div class="print-sub">${escapeHtml(m.address)} &nbsp; PHONE: ${escapeHtml(m.phone)}</div>
+  </div>`;
+}
+
+function opdReceiptHtml(visit, patient) {
+  const preparedBy = currentUser()?.name || "Reception";
+  return `<div class="receipt receipt-opd">
+    ${receiptHeader("CONSULTATION CHARGES RECEIPT")}
+    <div class="print-grid">
+      <div><strong>UHID:</strong> ${escapeHtml(patient?.uhid || "")}</div>
+      <div><strong>Voucher No:</strong> ${escapeHtml(visit.voucherNo)}</div>
+      <div><strong>Voucher Dt:</strong> ${fmtDate(visit.date)}</div>
+      <div><strong>Name:</strong> ${escapeHtml(patient ? `${patient.firstName} ${patient.lastName}` : "Walk-in")}</div>
+      <div><strong>Gender:</strong> ${patient?.gender === "F" ? "Female" : "Male"}</div>
+      <div><strong>Age:</strong> ${patient ? age(patient.dob) : ""}</div>
+      <div><strong>Address:</strong> ${escapeHtml(patient?.address || "")}</div>
+      <div><strong>Weight:</strong> ${visit.vitals?.wt || ""}</div>
+      <div><strong>Temp:</strong> ${visit.vitals?.temp || ""}</div>
+      <div><strong>Contact No:</strong> ${escapeHtml(patient?.mobile || "")}</div>
+    </div>
+    <table class="print-table print-table-tall"><thead><tr><th>S.No.</th><th>Particulars</th><th class="right">Rate</th><th class="right">Amount</th></tr></thead><tbody>${visit.items.map((it, i) => `<tr><td>${i + 1}</td><td>${escapeHtml(it.name).toUpperCase()}</td><td class="right">${moneyText(it.rate)}</td><td class="right">${moneyText(it.rate * it.qty)}</td></tr>`).join("")}</tbody></table>
+    <div class="print-total-row"><div>${numToWordsINR(visit.total)} Only</div><div>${moneyText(visit.total)}</div></div>
+    <div class="print-footer"><div>Print Date & Time: ${fmtDateTime(new Date())}<br>Prepared By: <strong>${escapeHtml(preparedBy)}</strong></div><div>For ${escapeHtml(state.data.meta.clinicName).toUpperCase()} CHILDRENS CLINIC<br><br>Authorised Signatory</div></div>
+  </div>`;
+}
+
+function pharmacyReceiptHtml(sale, patient) {
+  const taxable = sale.total / 1.05;
+  const gstHalf = (sale.total - taxable) / 2;
+  return `<div class="receipt receipt-pharmacy">
+    ${receiptHeader("TAX INVOICE")}
+    <div class="print-grid two">
+      <div><strong>Patient Name:</strong> ${escapeHtml(patient ? `${patient.firstName} ${patient.lastName}` : "Walk-in")}</div>
+      <div><strong>Bill No:</strong> ${escapeHtml(sale.voucherNo)}</div>
+      <div><strong>Patient Address:</strong> ${escapeHtml(patient?.address || "")}</div>
+      <div><strong>Date:</strong> ${fmtDate(sale.date)}</div>
+      <div><strong>Doctor Name:</strong> ${escapeHtml(state.data.meta.clinicName)}</div>
+      <div><strong>Bill Time:</strong> ${fmtTime(sale.date)}</div>
+    </div>
+    <table class="print-table print-table-tall"><thead><tr><th>No</th><th>Description of Goods</th><th>S.D.</th><th>Manufact.</th><th>HSNC</th><th>UOM</th><th>Batch No</th><th>Exp</th><th class="right">M.R.P</th><th class="right">Qty</th><th class="right">Rate</th><th class="right">Amount</th></tr></thead><tbody>${sale.items.map((it, i) => {
+      const drug = state.data.drugs.find((d) => d.id === it.drugId);
+      return `<tr><td>${i + 1}</td><td>${escapeHtml(it.name).toUpperCase()}</td><td></td><td></td><td>${escapeHtml(drug?.hsn || "")}</td><td>PCS</td><td>${escapeHtml(it.batch || "")}</td><td>${shortExpiry(it.expiry)}</td><td class="right">${moneyText(it.rate)}</td><td class="right">${it.qty}</td><td class="right">${moneyText(it.rate)}</td><td class="right">${moneyText(it.rate * it.qty)}</td></tr>`;
+    }).join("")}</tbody></table>
+    <div class="print-total-row"><div>Rupees in Words: ${numToWordsINR(sale.total)} Only</div><div>BILL AMOUNT: <span>${moneyText(sale.total)}</span></div></div>
+    <table class="print-gst"><tbody><tr><th>Particulars</th><th>Taxable</th><th>CGST</th><th>SGST</th></tr><tr><td>GST 5% Sales</td><td>${moneyText(taxable)}</td><td>${moneyText(gstHalf)}</td><td>${moneyText(gstHalf)}</td></tr></tbody></table>
+    <div class="print-footer"><div>Customer Signature:</div><div>For ${escapeHtml(state.data.meta.clinicName).toUpperCase()} CHILDRENS CLINIC<br><br>Authorised Signatory</div></div>
+  </div>`;
+}
+
+function prescriptionReceiptHtml(visit, patient) {
+  return `<div class="receipt receipt-opd">
+    ${receiptHeader("PRESCRIPTION")}
+    <div class="print-grid two"><div><strong>Patient:</strong> ${escapeHtml(patient ? `${patient.firstName} ${patient.lastName}` : "")}</div><div><strong>Visit:</strong> ${escapeHtml(visit.voucherNo)}</div><div><strong>UHID:</strong> ${escapeHtml(patient?.uhid || "")}</div><div><strong>Date:</strong> ${fmtDate(visit.date)}</div></div>
+    <table class="print-table"><thead><tr><th>Medicine</th><th>Dose</th><th>Frequency</th><th class="right">Days</th><th class="right">Qty</th></tr></thead><tbody>${(visit.prescription || []).map((it) => `<tr><td>${escapeHtml(it.name)}</td><td>${escapeHtml(it.dose)}</td><td>${escapeHtml(it.frequency)}</td><td class="right">${it.days || ""}</td><td class="right">${it.qty || ""}</td></tr>`).join("")}</tbody></table>
+    <p><strong>Notes:</strong> ${escapeHtml(visit.notes || "")}</p>
+  </div>`;
 }
 
 async function mutate(url, options, success) {
@@ -670,16 +730,39 @@ function formValues(formId) { const form = byId(formId); return Object.fromEntri
 function byId(id) { return document.getElementById(id); }
 function empty(text) { return `<div class="empty">${text}</div>`; }
 function rupee(n) { return INR.format(Number(n) || 0); }
+function moneyText(n) { return (Number(n) || 0).toFixed(2); }
 function sum(rows, fieldName) { return rows.reduce((s, r) => s + (Number(r[fieldName]) || 0), 0); }
 function sameDay(date) { return new Date(date).toDateString() === new Date().toDateString(); }
 function fmtDate(date) { return new Date(date).toLocaleDateString("en-IN"); }
 function fmtTime(date) { return new Date(date).toLocaleTimeString("en-IN", { hour: "numeric", minute: "2-digit" }); }
 function fmtDateTime(date) { return `${fmtDate(date)} ${fmtTime(date)}`; }
+function shortExpiry(date) {
+  const d = new Date(date);
+  return `${d.getMonth() + 1}/${String(d.getFullYear()).slice(-2)}`;
+}
 function patientName(id) { const p = state.data.patients.find((x) => x.id === id); return p ? `${escapeHtml(p.firstName)} ${escapeHtml(p.lastName)}` : ""; }
 function supplierName(id) { return escapeHtml(state.data.suppliers.find((s) => s.id === id)?.name || ""); }
 function userName(id) { return escapeHtml(state.data.users.find((u) => u.id === id)?.name || id || ""); }
 function title(s) { return String(s).replace(/[-_]/g, " ").replace(/\b\w/g, (m) => m.toUpperCase()); }
 function age(dob) { const ms = Date.now() - new Date(dob); const y = Math.floor(ms / 31557600000); if (y > 0) return `${y}y`; return `${Math.max(0, Math.floor(ms / 2629800000))}m`; }
+function numToWordsINR(value) {
+  const n = Math.round(Number(value) || 0);
+  if (n === 0) return "Zero";
+  const ones = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
+  const tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+  const two = (x) => x < 20 ? ones[x] : `${tens[Math.floor(x / 10)]}${x % 10 ? ` ${ones[x % 10]}` : ""}`;
+  const three = (x) => `${x >= 100 ? `${ones[Math.floor(x / 100)]} Hundred` : ""}${x >= 100 && x % 100 ? " " : ""}${x % 100 ? two(x % 100) : ""}`;
+  let rest = n;
+  const crore = Math.floor(rest / 10000000); rest %= 10000000;
+  const lakh = Math.floor(rest / 100000); rest %= 100000;
+  const thousand = Math.floor(rest / 1000); rest %= 1000;
+  return [
+    crore ? `${three(crore)} Crore` : "",
+    lakh ? `${three(lakh)} Lakh` : "",
+    thousand ? `${three(thousand)} Thousand` : "",
+    rest ? three(rest) : ""
+  ].filter(Boolean).join(" ");
+}
 function escapeHtml(value) { return String(value ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
 function saveValue(key, value) { sessionStorage.setItem(`charaka.${key}`, value); }
 function getValue(key, fallback) { return sessionStorage.getItem(`charaka.${key}`) ?? fallback; }

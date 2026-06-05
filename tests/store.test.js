@@ -136,3 +136,12 @@ test("login accepts valid PIN and rejects invalid PIN", () => {
     /Invalid account or PIN/
   );
 });
+
+test("existing data loads receipt metadata defaults", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "charaka-test-"));
+  const file = path.join(dir, "clinic.json");
+  fs.writeFileSync(file, JSON.stringify({ meta: { clinicName: "Existing" }, sequences: {}, users: [] }));
+  const store = new ClinicStore(file);
+  assert.equal(store.state.meta.gstin, "37AHDPT3692H1ZW");
+  assert.ok(store.state.meta.drugLicenseNo20);
+});

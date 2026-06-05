@@ -27,7 +27,14 @@ export class ClinicStore {
       fs.writeFileSync(this.file, JSON.stringify(seed, null, 2));
       return seed;
     }
-    return JSON.parse(fs.readFileSync(this.file, "utf8"));
+    const data = JSON.parse(fs.readFileSync(this.file, "utf8"));
+    const seed = createSeedData();
+    data.meta = { ...seed.meta, ...(data.meta || {}) };
+    if (!data.meta.gstin) data.meta.gstin = seed.meta.gstin;
+    if (!data.meta.drugLicenseNo20) data.meta.drugLicenseNo20 = seed.meta.drugLicenseNo20;
+    if (!data.meta.drugLicenseNo21) data.meta.drugLicenseNo21 = seed.meta.drugLicenseNo21;
+    fs.writeFileSync(this.file, JSON.stringify(data, null, 2));
+    return data;
   }
 
   save() {
