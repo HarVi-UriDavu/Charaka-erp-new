@@ -79,6 +79,30 @@ export class ClinicStore {
     return user;
   }
 
+  updateClinicSettings(input, userId = "U04") {
+    this.requireAdmin(userId);
+    const allowed = [
+      "clinicName",
+      "clinicSubtitle",
+      "address",
+      "phone",
+      "email",
+      "gstin",
+      "drugLicenseNo20",
+      "drugLicenseNo21",
+      "regNo",
+      "financialYear"
+    ];
+    for (const key of allowed) {
+      if (input[key] !== undefined) this.state.meta[key] = String(input[key]).trim();
+    }
+    if (!this.state.meta.clinicName) throw httpError(400, "Clinic name is required");
+    if (!/^\d{2}$/.test(this.state.meta.financialYear || "")) throw httpError(400, "Financial year must be two digits, like 26");
+    this.audit(userId, "UPDATE", "settings", "clinic", { fields: Object.keys(input).filter((k) => allowed.includes(k)) });
+    this.save();
+    return this.state.meta;
+  }
+
   addPatient(input, userId = "U04") {
     this.requireUser(userId);
     const seq = this.nextSeq("patient");

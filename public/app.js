@@ -422,15 +422,35 @@ function openMasterDialog(tab) {
 }
 
 function settingsHtml() {
+  const meta = state.data.meta;
   return `
     ${head("Settings", "Local server operations and backups")}
     <div class="page-body grid cols-2">
+      <section class="card pad" style="grid-column:1/-1">
+        <h2>Clinic details</h2>
+        <form id="clinicSettingsForm" class="grid cols-2" style="margin-top:14px">
+          ${field("clinicName", "Clinic name", "text", true, meta.clinicName)}
+          ${field("clinicSubtitle", "Clinic subtitle", "text", false, meta.clinicSubtitle)}
+          <div class="field" style="grid-column:1/-1"><label>Address</label><textarea name="address">${escapeHtml(meta.address || "")}</textarea></div>
+          ${field("phone", "Phone", "text", false, meta.phone)}
+          ${field("email", "Email", "email", false, meta.email)}
+          ${field("gstin", "GSTIN", "text", false, meta.gstin)}
+          ${field("regNo", "Registration number", "text", false, meta.regNo)}
+          ${field("drugLicenseNo20", "Drug license 20", "text", false, meta.drugLicenseNo20)}
+          ${field("drugLicenseNo21", "Drug license 21", "text", false, meta.drugLicenseNo21)}
+          ${field("financialYear", "Financial year suffix", "text", true, meta.financialYear)}
+        </form>
+        <button class="btn" id="saveClinicSettings" style="margin-top:14px">Save clinic details</button>
+      </section>
       <section class="card pad"><h2>Clinic server</h2><p class="hint">Run this app on the clinic LAN server and open it from reception, pharmacy, and doctor-room browsers.</p><div class="grid" style="margin-top:14px">${stat("Current host", location.host, "LAN machines use this server address")}${stat("Data file", "data/clinic.json", "first-pass local persistence")}</div></section>
       <section class="card pad"><h2>Backup</h2><p class="hint">Creates a restorable JSON snapshot in the local backups folder.</p><button class="btn" id="backupBtn" style="margin-top:14px">Create backup now</button></section>
     </div>`;
 }
 
 function bindSettings() {
+  byId("saveClinicSettings")?.addEventListener("click", async () => {
+    await mutate("/api/settings/clinic", { method: "PATCH", body: JSON.stringify(formValues("clinicSettingsForm")) }, "Clinic settings saved");
+  });
   byId("backupBtn")?.addEventListener("click", async () => {
     const backup = await mutate("/api/backup", { method: "POST", body: "{}" }, "Backup created");
     showToast("Backup created", backup.file);

@@ -145,3 +145,25 @@ test("existing data loads receipt metadata defaults", () => {
   assert.equal(store.state.meta.gstin, "37AHDPT3692H1ZW");
   assert.ok(store.state.meta.drugLicenseNo20);
 });
+
+test("admin can update clinic receipt settings", () => {
+  const store = tempStore();
+  const meta = store.updateClinicSettings({
+    clinicName: "Charaka Clinic Test",
+    gstin: "37ABCDE1234F1Z5",
+    drugLicenseNo20: "DL20TEST",
+    financialYear: "27"
+  }, "U04");
+  assert.equal(meta.clinicName, "Charaka Clinic Test");
+  assert.equal(meta.gstin, "37ABCDE1234F1Z5");
+  assert.equal(meta.drugLicenseNo20, "DL20TEST");
+  assert.equal(meta.financialYear, "27");
+});
+
+test("non-admin cannot update clinic receipt settings", () => {
+  const store = tempStore();
+  assert.throws(
+    () => store.updateClinicSettings({ gstin: "37BLOCKED1234Z1" }, "U03"),
+    /Only admin/
+  );
+});
