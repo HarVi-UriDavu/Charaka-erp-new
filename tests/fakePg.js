@@ -67,6 +67,8 @@ export function fakePgState(overrides = {}) {
     salesReturns: [],
     returnItems: [],
     stockMovements: [],
+    importJobs: [],
+    backupJobs: [],
     auditLogs: [],
     ...overrides
   };
@@ -100,6 +102,54 @@ export function fakeDb(state = fakePgState()) {
       if (text.startsWith("insert into app_settings")) {
         state.settings = JSON.parse(params[0]);
         return { rows: [] };
+      }
+      if (text.includes("from invoices i") && text.includes("left join payments")) {
+        const date = params[0];
+        const rows = state.invoices
+          .filter((invoice) => sameDay(invoice.invoice_at, date))
+          .map((invoice) => {
+            const payments = state.payments.filter((p) => p.invoice_id === invoice.id);
+            return {
+              id: invoice.id,
+              kind: invoice.kind,
+              refId: invoice.ref_id,
+              voucherNo: invoice.voucher_no,
+              partyId: invoice.party_id,
+              date: invoice.invoice_at,
+              total: invoice.total,
+              cash: payments.filter((p) => p.mode === "Cash").reduce((s, p) => s + Number(p.amount || 0), 0),
+              upi: payments.filter((p) => p.mode === "UPI").reduce((s, p) => s + Number(p.amount || 0), 0)
+            };
+          });
+        return { rows };
+      }
+      if (text.includes("from sales_returns") && text.includes("return_at::date")) {
+        return { rows: state.salesReturns.filter((r) => sameDay(r.return_at, params[0])).map((r) => ({ id: r.id, voucherNo: r.voucher_no, saleId: r.sale_id, reason: r.reason, date: r.return_at, amount: r.amount })) };
+      }
+      if (text.includes("from drug_batches b") && text.includes("join drugs")) {
+        return {
+          rows: state.drugBatches.map((batch) => {
+            const drug = state.drugs.find((d) => d.id === batch.drug_id) || {};
+            return {
+              id: batch.id,
+              drugId: batch.drug_id,
+              batch: batch.batch,
+              expiry: batch.expiry,
+              qty: batch.qty,
+              purchaseRate: batch.purchase_rate,
+              mrp: batch.mrp,
+              drugName: drug.name || "",
+              form: drug.form || "",
+              gst: drug.gst || 0,
+              reorderLevel: drug.reorder_level || drug.reorderLevel || 0,
+              daysToExpiry: 30,
+              value: Number(batch.qty || 0) * Number(batch.purchase_rate || 0)
+            };
+          })
+        };
+      }
+      if (text.includes("from audit_logs") && text.includes("order by at desc")) {
+        return { rows: state.auditLogs.slice(0, params[0]).map((log) => ({ id: log.id, at: log.at || new Date().toISOString(), userId: log.userId, action: log.action, entity: log.entity, entityId: log.entityId, details: log.details })) };
       }
       if (text.includes("from patients") && text.includes("where id = $1")) {
         return { rows: state.patients.filter((p) => p.id === params[0]) };
@@ -229,6 +279,16 @@ export function fakeDb(state = fakePgState()) {
         state.stockMovements.unshift({ id: params[0], kind: params[1], ref_id: params[2], drug_id: params[3], batch_id: params[4], qty: params[5], note: params[6], created_by: params[7] });
         return { rows: [] };
       }
+      if (text.startsWith("insert into import_jobs")) {
+        const job = { id: params[0], entity: params[1], imported: params[2], failed: params[3], errors: JSON.parse(params[4]), created_by: params[5] };
+        state.importJobs.unshift(job);
+        return { rows: [] };
+      }
+      if (text.startsWith("insert into backup_jobs")) {
+        const job = { id: state.backupJobs.length + 1, kind: params[0], filePath: params[1], status: params[2], details: JSON.parse(params[3]), created_by: params[4], createdAt: new Date().toISOString() };
+        state.backupJobs.unshift(job);
+        return { rows: [job] };
+      }
       if (text.startsWith("insert into pharmacy_sales")) {
         state.pharmacySales.unshift({ id: params[0], voucher_no: params[1], patient_id: params[2], linked_visit_id: params[3], sale_at: params[4], total: params[5], status: "paid", created_by: params[6] });
         return { rows: [] };
@@ -266,4 +326,8 @@ export function fakeDb(state = fakePgState()) {
       throw new Error(`Unexpected SQL in fakeDb: ${text}`);
     }
   };
+}
+
+function sameDay(value, date) {
+  return new Date(value).toISOString().slice(0, 10) === date;
 }

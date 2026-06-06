@@ -40,3 +40,4 @@ foundation is now in place; the next implementation step is to replace
 4. Pharmacy purchases, batches, stock movements, sales, and returns.
    `server/pgPharmacyStore.js` now contains this fourth backend slice.
 5. Imports, reports, and backups.
+   `server/pgReportsStore.js` now contains reports plus import/backup job tracking.
