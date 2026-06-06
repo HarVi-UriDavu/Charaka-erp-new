@@ -42,8 +42,13 @@ export function fakePgState(overrides = {}) {
     services: [
       { id: "S01", name: "Consultation", rate: 400, gst: 0, active: true }
     ],
+    drugs: [
+      { id: "DR01", name: "Paracetamol Syrup" },
+      { id: "DR02", name: "Amoxicillin 250 Syrup" }
+    ],
     visits: [],
     vitals: [],
+    prescriptions: [],
     visitItems: [],
     invoices: [],
     invoiceItems: [],
@@ -120,6 +125,18 @@ export function fakeDb(state = fakePgState()) {
         state.visits.unshift(visit);
         return { rows: [visit] };
       }
+      if (text.includes("from visits") && text.includes("where id = $1")) {
+        return { rows: state.visits.filter((v) => v.id === params[0]) };
+      }
+      if (text.startsWith("update visits")) {
+        const visit = state.visits.find((v) => v.id === params[0]);
+        if (visit) {
+          visit.status = "done";
+          visit.notes = params[1];
+          visit.updated_by = params[2];
+        }
+        return { rows: visit ? [visit] : [] };
+      }
       if (text.startsWith("insert into vitals")) {
         state.vitals.push({ visit_id: params[0], weight_kg: params[1], height_cm: params[2], temp_f: params[3], pulse: params[4], recorded_at: params[5] });
         return { rows: [] };
@@ -144,6 +161,17 @@ export function fakeDb(state = fakePgState()) {
       if (text.startsWith("insert into payments")) {
         state.payments.push({ invoice_id: params[0], mode: params[1], amount: params[2], paid_at: params[3] });
         return { rows: [] };
+      }
+      if (text.startsWith("delete from prescriptions")) {
+        state.prescriptions = state.prescriptions.filter((rx) => rx.visit_id !== params[0]);
+        return { rows: [] };
+      }
+      if (text.startsWith("insert into prescriptions")) {
+        state.prescriptions.push({ visit_id: params[0], drug_id: params[1], name: params[2], dose: params[3], frequency: params[4], days: params[5], qty: params[6] });
+        return { rows: [] };
+      }
+      if (text.includes("from drugs") && text.includes("where id = $1")) {
+        return { rows: state.drugs.filter((d) => d.id === params[0]) };
       }
       throw new Error(`Unexpected SQL in fakeDb: ${text}`);
     }

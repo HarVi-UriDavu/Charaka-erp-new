@@ -36,5 +36,6 @@ foundation is now in place; the next implementation step is to replace
 2. Patients, visits, vitals, OPD invoices, and payments.
    `server/pgReceptionStore.js` now contains this second backend slice.
 3. Clinical prescriptions and visit completion.
+   `server/pgClinicalStore.js` now contains this third backend slice.
 4. Pharmacy purchases, batches, stock movements, sales, and returns.
 5. Imports, reports, and backups.
