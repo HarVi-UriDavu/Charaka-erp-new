@@ -43,13 +43,11 @@ async function handleApi(req, res) {
   if (req.method === "POST" && url.pathname === "/api/pharmacy/sales") return sendJson(res, 201, store.createPharmacySale(body, userId));
   if (req.method === "POST" && url.pathname === "/api/pharmacy/purchases") return sendJson(res, 201, store.createPurchase(body, userId));
   if (req.method === "POST" && url.pathname === "/api/pharmacy/returns") return sendJson(res, 201, store.createReturn(body, userId));
-  if (req.method === "POST" && url.pathname === "/api/dosing/suggest") return sendJson(res, 200, store.suggestDose(body, userId));
   if (req.method === "POST" && url.pathname === "/api/admin/services") return sendJson(res, 201, store.addService(body, userId));
   if (req.method === "POST" && url.pathname === "/api/admin/drugs") return sendJson(res, 201, store.addDrug(body, userId));
   if (req.method === "POST" && url.pathname === "/api/admin/suppliers") return sendJson(res, 201, store.addSupplier(body, userId));
   if (req.method === "POST" && url.pathname === "/api/admin/users") return sendJson(res, 201, store.addUser(body, userId));
   if (req.method === "POST" && url.pathname === "/api/admin/opening-stock") return sendJson(res, 201, store.addOpeningStock(body, userId));
-  if (req.method === "POST" && url.pathname === "/api/admin/dosing-rules") return sendJson(res, 201, store.addDosingRule(body, userId));
   if (req.method === "PATCH" && url.pathname === "/api/settings/clinic") return sendJson(res, 200, store.updateClinicSettings(body, userId));
   if (req.method === "POST" && url.pathname.startsWith("/api/import/")) {
     const entity = url.pathname.split("/").at(-1);

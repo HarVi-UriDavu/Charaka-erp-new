@@ -237,18 +237,11 @@ function clinicalHtml() {
 }
 
 function bindClinical() {
-  const bindRxRows = () => {
-    document.querySelectorAll("[data-rx-row]").forEach((row) => {
-      row.querySelector("[data-suggest-dose]")?.addEventListener("click", () => applyDosingSuggestion(row));
-    });
-  };
   document.querySelectorAll("[data-visit]").forEach((b) => b.addEventListener("click", () => { state.selectedVisitId = b.dataset.visit; render(); }));
   byId("addRx")?.addEventListener("click", () => {
     const rows = byId("rxRows");
     rows.insertAdjacentHTML("beforeend", rxRowHtml({}));
-    bindRxRows();
   });
-  bindRxRows();
   byId("saveClinical")?.addEventListener("click", async () => {
     const id = state.selectedVisitId;
     const payload = {
@@ -258,14 +251,10 @@ function bindClinical() {
       prescription: [...document.querySelectorAll("[data-rx-row]")].map((row) => ({
         drugId: row.querySelector("[name=drugId]").value,
         name: row.querySelector("[name=drugId]").selectedOptions[0]?.textContent || "",
-        indication: row.querySelector("[name=indication]").value,
         dose: row.querySelector("[name=dose]").value,
         frequency: row.querySelector("[name=frequency]").value,
         days: row.querySelector("[name=days]").value,
-        qty: row.querySelector("[name=qty]").value,
-        dosingRuleId: row.querySelector("[name=dosingRuleId]").value,
-        suggestedDose: row.querySelector("[name=suggestedDose]").value,
-        suggestionSource: row.querySelector("[name=suggestionSource]").value
+        qty: row.querySelector("[name=qty]").value
       }))
     };
     await mutate(`/api/visits/${id}`, { method: "PATCH", body: JSON.stringify(payload) }, "Clinical visit saved");
@@ -352,8 +341,7 @@ function mastersHtml() {
     drugs: simpleTable(data.drugs, ["name", "form", "pack", "hsn", "mrp", "gst", "reorderLevel"]),
     suppliers: simpleTable(data.suppliers, ["name", "gstin", "phone", "city"]),
     users: simpleTable(data.users, ["name", "role", "active"]),
-    stock: stockTable(data.stockRows),
-    dosing: dosingRulesTable(data.dosingRules || [])
+    stock: stockTable(data.stockRows)
   };
   const addLabels = {
     patients: "",
@@ -361,8 +349,7 @@ function mastersHtml() {
     drugs: "Add drug",
     suppliers: "Add supplier",
     users: "Add account",
-    stock: "Add opening stock",
-    dosing: "Add dosing rule"
+    stock: "Add opening stock"
   };
   return `
     ${head("Masters", "Reference data and spreadsheet imports", `<div class="tabs">${Object.keys(tables).map((t) => `<button data-master-tab="${t}" class="${tab === t ? "active" : ""}">${title(t)}</button>`).join("")}</div>`)}
@@ -422,12 +409,6 @@ function openMasterDialog(tab) {
       endpoint: "/api/admin/opening-stock",
       success: "Opening stock added",
       body: `<form id="masterForm" class="grid cols-2"><div class="field"><label>Drug *</label><select name="drugId">${state.data.drugs.map((d) => `<option value="${d.id}">${escapeHtml(d.name)}</option>`).join("")}</select></div>${field("batch", "Batch", "text", true)}${field("expiry", "Expiry", "date", true)}${field("qty", "Quantity", "number", true, "1")}${field("rate", "Purchase rate", "number", true, "0")}${field("mrp", "MRP", "number", false, "0")}</form>`
-    },
-    dosing: {
-      title: "Add dosing rule",
-      endpoint: "/api/admin/dosing-rules",
-      success: "Dosing rule added",
-      body: `<form id="masterForm" class="grid cols-2"><div class="field"><label>Drug *</label><select name="drugId">${state.data.drugs.map((d) => `<option value="${d.id}">${escapeHtml(d.name)}</option>`).join("")}</select></div>${field("indication", "Indication", "text", false, "Fever")}${field("route", "Route", "text", false, "Oral")}${field("dosePerKg", "Dose per kg", "number", true, "0")}${field("doseUnit", "Dose unit", "text", false, "mg")}${field("frequency", "Frequency", "text", true, "every 6 hours")}${field("days", "Default days", "number", false, "0")}${field("maxDose", "Max per dose", "number", false, "0")}${field("maxDailyDose", "Max daily dose", "number", false, "0")}${field("minAgeMonths", "Min age months", "number", false, "0")}${field("maxAgeMonths", "Max age months", "number", false, "0")}${field("minWeightKg", "Min weight kg", "number", false, "0")}${field("maxWeightKg", "Max weight kg", "number", false, "0")}${field("formulationStrength", "Strength per volume", "number", false, "0")}${field("formulationUnit", "Strength unit", "text", false, "mg")}${field("formulationVolumeMl", "Volume ml", "number", false, "0")}<div class="field" style="grid-column:1/-1"><label>Source *</label><input name="source" required placeholder="IAP Drug Formulary, licensed source, or doctor-approved clinic protocol"></div></form>`
     }
   };
   const config = forms[tab];
@@ -734,44 +715,7 @@ function patientText(p) { return `${p.uhid} ${p.firstName} ${p.lastName} ${p.mob
 function visitQueueItem(v, active) { const p = state.data.patients.find((x) => x.id === v.patientId); return `<button class="list-item ${active ? "active" : ""}" data-visit="${v.id}"><strong>${patientName(v.patientId)}</strong> <span class="badge ${v.status === "done" ? "green" : v.status === "waiting" ? "amber" : "teal"}">${v.status}</span><div class="hint mono">${v.voucherNo}</div><div class="hint">${p ? age(p.dob) : ""} - ${fmtTime(v.date)} - ${rupee(v.total)}</div></button>`; }
 function queueTable(rows) { return rows.length ? `<table><thead><tr><th>Patient</th><th>Status</th><th>Time</th></tr></thead><tbody>${rows.map((v) => `<tr><td>${patientName(v.patientId)}<div class="hint mono">${v.voucherNo}</div></td><td><span class="badge amber">${v.status}</span></td><td>${fmtTime(v.date)}</td></tr>`).join("")}</tbody></table>` : empty("No active queue"); }
 function clinicalFormHtml(v) { return `<h2>${patientName(v.patientId)} <span class="badge ${v.status === "done" ? "green" : "teal"}">${v.status}</span></h2><p class="hint mono">${v.voucherNo}</p><form id="clinicalVitals" class="grid cols-4" style="margin-top:14px">${field("wt", "Weight kg", "number", false, v.vitals?.wt || "")}${field("ht", "Height cm", "number", false, v.vitals?.ht || "")}${field("temp", "Temp F", "number", false, v.vitals?.temp || "")}${field("pulse", "Pulse", "number", false, v.vitals?.pulse || "")}</form><div class="field" style="margin-top:12px"><label>Notes</label><textarea id="clinicalNotes">${escapeHtml(v.notes || "")}</textarea></div><div class="toolbar" style="margin-top:14px"><h3>Prescription</h3><button class="btn secondary" id="addRx">Add drug</button></div><div id="rxRows" class="grid">${(v.prescription || []).map(rxRowHtml).join("") || rxRowHtml({})}</div><div class="toolbar" style="margin-top:14px"><button class="btn" id="saveClinical">Save clinical & mark done</button><button class="btn secondary" id="printPrescription">Print prescription</button></div>`; }
-function rxRowHtml(r = {}) {
-  return `<div data-rx-row class="grid cols-6">
-    <div class="field"><label>Drug</label><select name="drugId"><option value="">Text only</option>${state.data.drugs.map((d) => `<option value="${d.id}" ${r.drugId === d.id ? "selected" : ""}>${escapeHtml(d.name)}</option>`).join("")}</select></div>
-    <div class="field"><label>Indication</label><input name="indication" value="${escapeHtml(r.indication || "")}"></div>
-    <div class="field"><label>Dose</label><input name="dose" value="${escapeHtml(r.dose || "")}"></div>
-    <div class="field"><label>Frequency</label><input name="frequency" value="${escapeHtml(r.frequency || "")}"></div>
-    <div class="field"><label>Days</label><input name="days" type="number" value="${r.days || ""}"></div>
-    <div class="field"><label>Qty</label><input name="qty" type="number" value="${r.qty || 1}"></div>
-    <input type="hidden" name="dosingRuleId" value="${escapeHtml(r.dosingRuleId || "")}">
-    <input type="hidden" name="suggestedDose" value="${escapeHtml(r.suggestedDose || "")}">
-    <input type="hidden" name="suggestionSource" value="${escapeHtml(r.suggestionSource || "")}">
-    <div style="grid-column:1/-1" class="toolbar"><button type="button" class="btn secondary" data-suggest-dose>Suggest dose</button><span class="hint" data-dose-hint>${escapeHtml(r.suggestedDose ? `Suggested: ${r.suggestedDose}` : "Suggestions use admin-approved local dosing rules only.")}</span></div>
-  </div>`;
-}
-async function applyDosingSuggestion(row) {
-  const hint = row.querySelector("[data-dose-hint]");
-  hint.textContent = "Checking dosing rules...";
-  try {
-    const suggestion = await api("/api/dosing/suggest", {
-      method: "POST",
-      body: JSON.stringify({
-        visitId: state.selectedVisitId,
-        drugId: row.querySelector("[name=drugId]").value,
-        indication: row.querySelector("[name=indication]").value,
-        vitals: formValues("clinicalVitals")
-      })
-    });
-    row.querySelector("[name=dose]").value = suggestion.dose;
-    row.querySelector("[name=frequency]").value = suggestion.frequency;
-    if (suggestion.days) row.querySelector("[name=days]").value = suggestion.days;
-    row.querySelector("[name=dosingRuleId]").value = suggestion.ruleId;
-    row.querySelector("[name=suggestedDose]").value = suggestion.dose;
-    row.querySelector("[name=suggestionSource]").value = suggestion.source;
-    hint.textContent = `Suggested from ${suggestion.source}: ${suggestion.dose} ${suggestion.frequency}`;
-  } catch (error) {
-    hint.textContent = error.message;
-  }
-}
+function rxRowHtml(r = {}) { return `<div data-rx-row class="grid cols-5"><div class="field"><label>Drug</label><select name="drugId"><option value="">Text only</option>${state.data.drugs.map((d) => `<option value="${d.id}" ${r.drugId === d.id ? "selected" : ""}>${escapeHtml(d.name)}</option>`).join("")}</select></div><div class="field"><label>Dose</label><input name="dose" value="${escapeHtml(r.dose || "")}"></div><div class="field"><label>Frequency</label><input name="frequency" value="${escapeHtml(r.frequency || "")}"></div><div class="field"><label>Days</label><input name="days" type="number" value="${r.days || ""}"></div><div class="field"><label>Qty</label><input name="qty" type="number" value="${r.qty || 1}"></div></div>`; }
 function saleRowHtml(row = {}) {
   const selectedDrugId = row.drugId || state.data.drugs[0]?.id || "";
   return `<div data-sale-row class="grid cols-3" style="margin-bottom:10px"><div class="field"><label>Drug</label><select name="drugId">${state.data.drugs.map((d) => `<option value="${d.id}" ${selectedDrugId === d.id ? "selected" : ""}>${escapeHtml(d.name)}</option>`).join("")}</select></div><div class="field"><label>Batch</label><select name="batchId">${batchOptionsHtml(selectedDrugId, row.batchId)}</select></div><div class="field"><label>Qty</label><input name="qty" type="number" value="${row.qty || 1}" min="1"></div></div>`;
@@ -800,13 +744,6 @@ function returnTable(rows) { return rows.length ? `<table><thead><tr><th>Voucher
 function auditTable(rows) { return rows.length ? `<table><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Entity</th><th>Details</th></tr></thead><tbody>${rows.map((a) => `<tr><td>${fmtDateTime(a.at)}</td><td>${userName(a.userId)}</td><td>${a.action}</td><td>${a.entity}</td><td class="small">${escapeHtml(JSON.stringify(a.details))}</td></tr>`).join("")}</tbody></table>` : empty("No audit events yet"); }
 function simpleTable(rows, fields) { return `<table><thead><tr>${fields.map((f) => `<th>${title(f)}</th>`).join("")}</tr></thead><tbody>${rows.map((row) => `<tr>${fields.map((f) => `<td>${escapeHtml(String(row[f] ?? ""))}</td>`).join("")}</tr>`).join("")}</tbody></table>`; }
 function patientMasterTable(rows) { return `<table><thead><tr><th>UHID</th><th>Name</th><th>Mobile</th><th>Guardian</th></tr></thead><tbody>${rows.map((p) => `<tr><td class="mono">${p.uhid}</td><td>${escapeHtml(p.firstName)} ${escapeHtml(p.lastName)}</td><td>${p.mobile}</td><td>${escapeHtml(p.guardian.name)}</td></tr>`).join("")}</tbody></table>`; }
-function dosingRulesTable(rows) {
-  return rows.length ? `<table><thead><tr><th>Drug</th><th>Indication</th><th>Rule</th><th>Limits</th><th>Source</th></tr></thead><tbody>${rows.map((r) => {
-    const limits = [`${r.minAgeMonths || 0}-${r.maxAgeMonths || "any"} mo`, `${r.minWeightKg || 0}-${r.maxWeightKg || "any"} kg`].join(", ");
-    const syrup = r.formulationStrength && r.formulationVolumeMl ? `, ${r.formulationStrength}${r.formulationUnit}/${r.formulationVolumeMl}ml` : "";
-    return `<tr><td>${drugName(r.drugId)}</td><td>${escapeHtml(r.indication || "-")}</td><td>${r.dosePerKg} ${escapeHtml(r.doseUnit)}/kg, ${escapeHtml(r.frequency)}${r.maxDose ? `, max ${r.maxDose}` : ""}${syrup}</td><td>${escapeHtml(limits)}</td><td>${escapeHtml(r.source)}</td></tr>`;
-  }).join("")}</tbody></table>` : empty("No dosing rules yet. Add only doctor-approved or licensed-source rules.");
-}
 
 function field(name, label, type = "text", required = false, value = "") { return `<div class="field"><label>${label}${required ? " *" : ""}</label><input name="${name}" type="${type}" value="${escapeHtml(String(value))}" ${required ? "required" : ""}></div>`; }
 function formValues(formId) { const form = byId(formId); return Object.fromEntries([...form.querySelectorAll("input,select,textarea")].map((el) => [el.name || el.id, el.value])); }

@@ -10,16 +10,18 @@ services:
       - ./backups:/app/backups
     environment:
       - PORT=4173
+      - DATABASE_URL=postgresql://charaka:${POSTGRES_PASSWORD:-charaka-dev-password}@postgres:5432/charaka
+    depends_on:
+      - postgres
 
   postgres:
     image: postgres:16-alpine
     container_name: charaka-postgres
     restart: unless-stopped
-    profiles: ["postgres-target"]
     environment:
       POSTGRES_DB: charaka
       POSTGRES_USER: charaka
-      POSTGRES_PASSWORD: change-me-before-clinic-use
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-charaka-dev-password}
     ports:
       - "5432:5432"
     volumes:

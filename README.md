@@ -9,8 +9,8 @@ Operations-first local clinic ERP MVP built from the prototype plan.
 - Pharmacy sales, purchases, batch stock, expiry/low-stock alerts, sales returns.
 - Unified billing daybook, CSV export, reports, audit log.
 - CSV imports for patients, services, drugs, suppliers, and opening stock.
-- Admin-reviewed pediatric dosing rules with doctor-side dose suggestions.
 - Local backup action and Docker deployment files.
+- PostgreSQL target schema and Docker database service.
 
 ## Start
 
@@ -42,19 +42,14 @@ Default demo PINs:
 
 Admin can add more accounts from `Masters -> Users -> Add account`.
 
-## Pediatric Dosing Rules
+## PostgreSQL Backend
 
-The ERP can suggest pediatric doses only from local rules that Admin has entered
-and the doctor has approved. In the doctor screen, enter the child's current
-weight, select a medicine, and click `Suggest dose`; the doctor must still
-review/edit the final prescription before saving.
-
-If you have licensed permission to use a pediatric dosage PDF, create a private
-review CSV with:
+The current browser app still runs from `data/clinic.json` while the database
+backend is being built. PostgreSQL now starts through Docker Compose and
+initializes from `database/schema.sql`.
 
 ```bash
-/Users/v/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 tools/extract_dosing_candidates.py "/path/to/licensed-dosage-book.pdf" --out data/dosing-candidates.csv
+POSTGRES_PASSWORD=change-this-at-clinic docker compose up -d postgres
 ```
 
-The CSV is written under ignored `data/` storage. Review rows manually before
-adding active rules in `Masters -> Dosing -> Add dosing rule`.
+See `database/README.md` for the backend migration sequence.
