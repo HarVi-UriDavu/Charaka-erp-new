@@ -31,8 +31,9 @@ The browser app still runs against `data/clinic.json`. The PostgreSQL backend
 foundation is now in place; the next implementation step is to replace
 `ClinicStore` methods with Postgres-backed queries one workflow at a time:
 
-1. Auth, roles, settings, and sequence generation.
+1. Auth, roles, settings, sequence generation, and audit logs.
+   `server/pgSystemStore.js` now contains this first backend slice.
 2. Patients, visits, vitals, OPD invoices, and payments.
 3. Clinical prescriptions and visit completion.
 4. Pharmacy purchases, batches, stock movements, sales, and returns.
-5. Imports, reports, audit logs, and backups.
+5. Imports, reports, and backups.

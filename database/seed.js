@@ -1,5 +1,5 @@
-import crypto from "node:crypto";
 import { createPool, withTransaction } from "../server/db.js";
+import { hashPin } from "../server/pgSystemStore.js";
 import { createSeedData } from "../server/seed.js";
 
 const seed = createSeedData();
@@ -275,10 +275,6 @@ async function insertPayment(db, invoiceId, mode, amount, paidAt) {
      where not exists (select 1 from payments where invoice_id = $1 and mode = $2 and amount = $3)`,
     [invoiceId, mode, amount, paidAt]
   );
-}
-
-function hashPin(pin) {
-  return crypto.createHash("sha256").update(String(pin)).digest("hex");
 }
 
 function dateOnly(value) {
