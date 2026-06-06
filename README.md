@@ -52,4 +52,12 @@ initializes from `database/schema.sql`.
 POSTGRES_PASSWORD=change-this-at-clinic docker compose up -d postgres
 ```
 
+Direct migration/seed commands:
+
+```bash
+npm install
+DATABASE_URL=postgresql://charaka:change-this-at-clinic@localhost:5432/charaka npm run db:migrate
+DATABASE_URL=postgresql://charaka:change-this-at-clinic@localhost:5432/charaka npm run db:seed
+```
+
 See `database/README.md` for the backend migration sequence.
