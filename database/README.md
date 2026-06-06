@@ -34,6 +34,7 @@ foundation is now in place; the next implementation step is to replace
 1. Auth, roles, settings, sequence generation, and audit logs.
    `server/pgSystemStore.js` now contains this first backend slice.
 2. Patients, visits, vitals, OPD invoices, and payments.
+   `server/pgReceptionStore.js` now contains this second backend slice.
 3. Clinical prescriptions and visit completion.
 4. Pharmacy purchases, batches, stock movements, sales, and returns.
 5. Imports, reports, and backups.
