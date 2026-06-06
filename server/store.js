@@ -496,6 +496,59 @@ export class ClinicStore {
     return rule;
   }
 
+  suggestDose(input, userId = "U01") {
+    this.requireUser(userId);
+    const drugId = required(input.drugId, "drugId");
+    const drug = this.state.drugs.find((d) => d.id === drugId && d.active);
+    if (!drug) throw httpError(404, "Drug not found");
+    const visit = input.visitId ? this.state.visits.find((v) => v.id === input.visitId) : null;
+    const patient = input.patientId
+      ? this.state.patients.find((p) => p.id === input.patientId)
+      : visit ? this.state.patients.find((p) => p.id === visit.patientId) : null;
+    const vitals = normalizeVitals(input.vitals || {});
+    const wt = Number(vitals.wt || visit?.vitals?.wt || latestWeight(patient));
+    if (!wt) throw httpError(400, "Enter weight before suggesting a pediatric dose");
+    const months = patient ? ageMonths(patient.dob) : 0;
+    const indication = String(input.indication || "").trim().toLowerCase();
+    const rules = (this.state.dosingRules || []).filter((rule) => {
+      if (!rule.active || rule.drugId !== drugId) return false;
+      if (rule.minAgeMonths && months < rule.minAgeMonths) return false;
+      if (rule.maxAgeMonths && months > rule.maxAgeMonths) return false;
+      if (rule.minWeightKg && wt < rule.minWeightKg) return false;
+      if (rule.maxWeightKg && wt > rule.maxWeightKg) return false;
+      return true;
+    }).sort((a, b) => {
+      const ai = indication && String(a.indication || "").toLowerCase().includes(indication) ? 0 : 1;
+      const bi = indication && String(b.indication || "").toLowerCase().includes(indication) ? 0 : 1;
+      return ai - bi;
+    });
+    const rule = rules[0];
+    if (!rule) throw httpError(404, "No matching admin-approved dosing rule for this drug, age, and weight");
+    let perDose = money((Number(rule.dosePerKg) || 0) * wt);
+    const capped = Boolean(rule.maxDose && perDose > rule.maxDose);
+    if (capped) perDose = Number(rule.maxDose);
+    const unit = rule.doseUnit || "mg";
+    const parts = [`${roundDose(perDose)} ${unit}`];
+    if (rule.formulationStrength && rule.formulationVolumeMl && rule.formulationUnit === unit) {
+      const ml = perDose / Number(rule.formulationStrength) * Number(rule.formulationVolumeMl);
+      parts.push(`approx ${roundDose(ml)} ml`);
+    }
+    if (capped) parts.push("capped");
+    return {
+      drugId,
+      drugName: drug.name,
+      ruleId: rule.id,
+      dose: parts.join(" / "),
+      frequency: rule.frequency,
+      days: rule.days || "",
+      source: rule.source,
+      weightKg: wt,
+      ageMonths: months,
+      maxDailyDose: rule.maxDailyDose || 0,
+      caution: "Doctor must verify the suggested pediatric dose before prescribing."
+    };
+  }
+
   importCsv(entity, csvText, userId = "U04") {
     this.requireAdmin(userId);
     const rows = parseCsv(csvText);
@@ -594,6 +647,18 @@ function validateMobile(value) {
   const mobile = String(value || "").replace(/\D/g, "");
   if (!/^[6-9]\d{9}$/.test(mobile)) throw httpError(400, "mobile must be a 10-digit Indian number");
   return mobile;
+}
+
+function ageMonths(dob) {
+  return Math.max(0, Math.floor((Date.now() - new Date(dob)) / 2629800000));
+}
+
+function latestWeight(patient) {
+  return patient?.weights?.length ? patient.weights.at(-1).w : 0;
+}
+
+function roundDose(value) {
+  return Math.round((Number(value) || 0) * 10) / 10;
 }
 
 export function parseCsv(text) {

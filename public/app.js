@@ -748,55 +748,29 @@ function rxRowHtml(r = {}) {
     <div style="grid-column:1/-1" class="toolbar"><button type="button" class="btn secondary" data-suggest-dose>Suggest dose</button><span class="hint" data-dose-hint>${escapeHtml(r.suggestedDose ? `Suggested: ${r.suggestedDose}` : "Suggestions use admin-approved local dosing rules only.")}</span></div>
   </div>`;
 }
-function applyDosingSuggestion(row) {
-  const suggestion = calculateDosingSuggestion(row);
+async function applyDosingSuggestion(row) {
   const hint = row.querySelector("[data-dose-hint]");
-  if (!suggestion.ok) {
-    hint.textContent = suggestion.message;
-    return;
+  hint.textContent = "Checking dosing rules...";
+  try {
+    const suggestion = await api("/api/dosing/suggest", {
+      method: "POST",
+      body: JSON.stringify({
+        visitId: state.selectedVisitId,
+        drugId: row.querySelector("[name=drugId]").value,
+        indication: row.querySelector("[name=indication]").value,
+        vitals: formValues("clinicalVitals")
+      })
+    });
+    row.querySelector("[name=dose]").value = suggestion.dose;
+    row.querySelector("[name=frequency]").value = suggestion.frequency;
+    if (suggestion.days) row.querySelector("[name=days]").value = suggestion.days;
+    row.querySelector("[name=dosingRuleId]").value = suggestion.ruleId;
+    row.querySelector("[name=suggestedDose]").value = suggestion.dose;
+    row.querySelector("[name=suggestionSource]").value = suggestion.source;
+    hint.textContent = `Suggested from ${suggestion.source}: ${suggestion.dose} ${suggestion.frequency}`;
+  } catch (error) {
+    hint.textContent = error.message;
   }
-  row.querySelector("[name=dose]").value = suggestion.dose;
-  row.querySelector("[name=frequency]").value = suggestion.frequency;
-  if (suggestion.days) row.querySelector("[name=days]").value = suggestion.days;
-  row.querySelector("[name=dosingRuleId]").value = suggestion.ruleId;
-  row.querySelector("[name=suggestedDose]").value = suggestion.dose;
-  row.querySelector("[name=suggestionSource]").value = suggestion.source;
-  hint.textContent = `Suggested from ${suggestion.source}: ${suggestion.dose} ${suggestion.frequency}`;
-}
-function calculateDosingSuggestion(row) {
-  const drugId = row.querySelector("[name=drugId]").value;
-  if (!drugId) return { ok: false, message: "Select a drug before suggesting a dose." };
-  const visit = state.data.visits.find((v) => v.id === state.selectedVisitId);
-  const patient = state.data.patients.find((p) => p.id === visit?.patientId);
-  const wt = Number(byId("clinicalVitals")?.wt?.value || visit?.vitals?.wt || latestWeight(patient));
-  if (!wt) return { ok: false, message: "Enter weight first. Pediatric dosing needs a current weight." };
-  const months = patient ? ageMonths(patient.dob) : 0;
-  const indication = row.querySelector("[name=indication]").value.trim().toLowerCase();
-  const rules = (state.data.dosingRules || []).filter((rule) => {
-    if (!rule.active || rule.drugId !== drugId) return false;
-    if (rule.minAgeMonths && months < rule.minAgeMonths) return false;
-    if (rule.maxAgeMonths && months > rule.maxAgeMonths) return false;
-    if (rule.minWeightKg && wt < rule.minWeightKg) return false;
-    if (rule.maxWeightKg && wt > rule.maxWeightKg) return false;
-    return true;
-  }).sort((a, b) => {
-    const ai = indication && a.indication?.toLowerCase().includes(indication) ? 0 : 1;
-    const bi = indication && b.indication?.toLowerCase().includes(indication) ? 0 : 1;
-    return ai - bi;
-  });
-  const rule = rules[0];
-  if (!rule) return { ok: false, message: "No matching admin-approved dosing rule for this drug, age, and weight." };
-  let perDose = (Number(rule.dosePerKg) || 0) * wt;
-  const capped = rule.maxDose && perDose > rule.maxDose;
-  if (capped) perDose = Number(rule.maxDose);
-  const unit = rule.doseUnit || "mg";
-  const parts = [`${roundDose(perDose)} ${unit}`];
-  if (rule.formulationStrength && rule.formulationVolumeMl && rule.formulationUnit === unit) {
-    const ml = perDose / Number(rule.formulationStrength) * Number(rule.formulationVolumeMl);
-    parts.push(`approx ${roundDose(ml)} ml`);
-  }
-  if (capped) parts.push("capped");
-  return { ok: true, ruleId: rule.id, dose: parts.join(" / "), frequency: rule.frequency, days: rule.days || "", source: rule.source };
 }
 function saleRowHtml(row = {}) {
   const selectedDrugId = row.drugId || state.data.drugs[0]?.id || "";
