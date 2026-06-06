@@ -9,10 +9,17 @@ settings, roles, permissions, and audit logs.
 
 ```bash
 POSTGRES_PASSWORD=change-this-at-clinic docker compose up -d postgres
+POSTGRES_PASSWORD=change-this-at-clinic docker compose run --rm erp npm run db:seed
+POSTGRES_PASSWORD=change-this-at-clinic docker compose up -d erp
 ```
 
 On first startup, Docker runs `database/schema.sql` automatically because it is
 mounted into `/docker-entrypoint-initdb.d/`.
+
+The seed command loads the starter clinic users, services, patients, drugs, and
+opening stock. Run it once for a fresh test database. After the clinic starts
+entering real data, do not re-seed unless you intentionally want to refresh the
+starter rows.
 
 For a non-Docker Postgres instance, run:
 
@@ -27,9 +34,9 @@ currently used by the JSON MVP.
 
 ## Current Status
 
-The browser app still runs against `data/clinic.json`. The PostgreSQL backend
-foundation is now in place; the next implementation step is to replace
-`ClinicStore` methods with Postgres-backed queries one workflow at a time:
+The app uses the JSON file backend when `DATABASE_URL` is not set. When
+`DATABASE_URL` is set, `server/index.js` starts the PostgreSQL app store instead.
+Docker Compose sets `DATABASE_URL` for the `erp` service automatically.
 
 1. Auth, roles, settings, sequence generation, and audit logs.
    `server/pgSystemStore.js` now contains this first backend slice.
@@ -41,3 +48,5 @@ foundation is now in place; the next implementation step is to replace
    `server/pgPharmacyStore.js` now contains this fourth backend slice.
 5. Imports, reports, and backups.
    `server/pgReportsStore.js` now contains reports plus import/backup job tracking.
+6. API wiring and app snapshots.
+   `server/pgAppStore.js` now connects the running HTTP API to PostgreSQL.

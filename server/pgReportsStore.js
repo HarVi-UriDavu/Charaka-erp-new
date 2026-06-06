@@ -66,7 +66,7 @@ export class PgReportsStore {
               d.form,
               d.gst,
               d.reorder_level as "reorderLevel",
-              ceil(b.expiry - current_date) as "daysToExpiry",
+              (b.expiry - current_date) as "daysToExpiry",
               b.qty * b.purchase_rate as value
        from drug_batches b
        join drugs d on d.id = b.drug_id

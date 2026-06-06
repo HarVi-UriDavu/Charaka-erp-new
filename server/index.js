@@ -2,14 +2,18 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createPool } from "./db.js";
+import { PgAppStore } from "./pgAppStore.js";
 import { ClinicStore, httpError } from "./store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
 const publicDir = path.join(rootDir, "public");
-const store = new ClinicStore();
+const pool = process.env.DATABASE_URL ? await createPool() : null;
+const store = pool ? new PgAppStore(pool) : new ClinicStore();
 const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || "0.0.0.0";
+const backendLabel = pool ? "PostgreSQL" : "JSON";
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -21,7 +25,7 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(port, host, () => {
-  console.log(`Charaka Clinic ERP listening on http://${host === "0.0.0.0" ? "localhost" : host}:${port}`);
+  console.log(`Charaka Clinic ERP listening on http://${host === "0.0.0.0" ? "localhost" : host}:${port} (${backendLabel} backend)`);
 });
 
 async function handleApi(req, res) {
@@ -30,32 +34,32 @@ async function handleApi(req, res) {
   const body = ["POST", "PUT", "PATCH"].includes(req.method) ? await readJson(req) : {};
 
   if (req.method === "GET" && url.pathname === "/api/state") {
-    const state = store.snapshot();
-    return sendJson(res, 200, { ...state, stockRows: store.stockRows(), daybook: store.daybook(url.searchParams.get("date") || undefined) });
+    const state = await store.snapshot();
+    return sendJson(res, 200, { ...state, stockRows: await store.stockRows(), daybook: await store.daybook(url.searchParams.get("date") || undefined) });
   }
-  if (req.method === "POST" && url.pathname === "/api/login") return sendJson(res, 200, store.login(body));
-  if (req.method === "POST" && url.pathname === "/api/patients") return sendJson(res, 201, store.addPatient(body, userId));
-  if (req.method === "POST" && url.pathname === "/api/visits") return sendJson(res, 201, store.createVisit(body, userId));
+  if (req.method === "POST" && url.pathname === "/api/login") return sendJson(res, 200, await store.login(body));
+  if (req.method === "POST" && url.pathname === "/api/patients") return sendJson(res, 201, await store.addPatient(body, userId));
+  if (req.method === "POST" && url.pathname === "/api/visits") return sendJson(res, 201, await store.createVisit(body, userId));
   if (req.method === "PATCH" && url.pathname.startsWith("/api/visits/")) {
     const id = url.pathname.split("/").at(-1);
-    return sendJson(res, 200, store.updateVisitClinical(id, body, userId));
+    return sendJson(res, 200, await store.updateVisitClinical(id, body, userId));
   }
-  if (req.method === "POST" && url.pathname === "/api/pharmacy/sales") return sendJson(res, 201, store.createPharmacySale(body, userId));
-  if (req.method === "POST" && url.pathname === "/api/pharmacy/purchases") return sendJson(res, 201, store.createPurchase(body, userId));
-  if (req.method === "POST" && url.pathname === "/api/pharmacy/returns") return sendJson(res, 201, store.createReturn(body, userId));
-  if (req.method === "POST" && url.pathname === "/api/admin/services") return sendJson(res, 201, store.addService(body, userId));
-  if (req.method === "POST" && url.pathname === "/api/admin/drugs") return sendJson(res, 201, store.addDrug(body, userId));
-  if (req.method === "POST" && url.pathname === "/api/admin/suppliers") return sendJson(res, 201, store.addSupplier(body, userId));
-  if (req.method === "POST" && url.pathname === "/api/admin/users") return sendJson(res, 201, store.addUser(body, userId));
-  if (req.method === "POST" && url.pathname === "/api/admin/opening-stock") return sendJson(res, 201, store.addOpeningStock(body, userId));
-  if (req.method === "PATCH" && url.pathname === "/api/settings/clinic") return sendJson(res, 200, store.updateClinicSettings(body, userId));
+  if (req.method === "POST" && url.pathname === "/api/pharmacy/sales") return sendJson(res, 201, await store.createPharmacySale(body, userId));
+  if (req.method === "POST" && url.pathname === "/api/pharmacy/purchases") return sendJson(res, 201, await store.createPurchase(body, userId));
+  if (req.method === "POST" && url.pathname === "/api/pharmacy/returns") return sendJson(res, 201, await store.createReturn(body, userId));
+  if (req.method === "POST" && url.pathname === "/api/admin/services") return sendJson(res, 201, await store.addService(body, userId));
+  if (req.method === "POST" && url.pathname === "/api/admin/drugs") return sendJson(res, 201, await store.addDrug(body, userId));
+  if (req.method === "POST" && url.pathname === "/api/admin/suppliers") return sendJson(res, 201, await store.addSupplier(body, userId));
+  if (req.method === "POST" && url.pathname === "/api/admin/users") return sendJson(res, 201, await store.addUser(body, userId));
+  if (req.method === "POST" && url.pathname === "/api/admin/opening-stock") return sendJson(res, 201, await store.addOpeningStock(body, userId));
+  if (req.method === "PATCH" && url.pathname === "/api/settings/clinic") return sendJson(res, 200, await store.updateClinicSettings(body, userId));
   if (req.method === "POST" && url.pathname.startsWith("/api/import/")) {
     const entity = url.pathname.split("/").at(-1);
-    return sendJson(res, 201, store.importCsv(entity, body.csv || "", userId));
+    return sendJson(res, 201, await store.importCsv(entity, body.csv || "", userId));
   }
-  if (req.method === "POST" && url.pathname === "/api/backup") return sendJson(res, 201, store.backup());
+  if (req.method === "POST" && url.pathname === "/api/backup") return sendJson(res, 201, await store.backup(userId));
   if (req.method === "GET" && url.pathname === "/api/export/daybook.csv") {
-    const book = store.daybook(url.searchParams.get("date") || undefined);
+    const book = await store.daybook(url.searchParams.get("date") || undefined);
     const csv = ["Voucher,Kind,Date,Party,Total,Cash,UPI", ...book.rows.map((r) => [r.voucherNo, r.kind, r.date, r.partyId || "Walk-in", r.total, r.paid?.cash || 0, r.paid?.upi || 0].map(csvCell).join(","))].join("\n");
     res.writeHead(200, { "content-type": "text/csv", "content-disposition": `attachment; filename="daybook-${book.date}.csv"` });
     return res.end(csv);

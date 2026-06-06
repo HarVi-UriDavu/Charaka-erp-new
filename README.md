@@ -20,6 +20,8 @@ npm start
 
 Then open [http://localhost:4173](http://localhost:4173).
 
+Without `DATABASE_URL`, this uses the local JSON file backend for quick demos.
+
 ## Test
 
 ```bash
@@ -44,13 +46,17 @@ Admin can add more accounts from `Masters -> Users -> Add account`.
 
 ## PostgreSQL Backend
 
-The current browser app still runs from `data/clinic.json` while the database
-backend is being built. PostgreSQL now starts through Docker Compose and
-initializes from `database/schema.sql`.
+When `DATABASE_URL` is set, the same browser app runs through the PostgreSQL
+backend. Docker Compose sets this automatically for the `erp` service.
 
 ```bash
 POSTGRES_PASSWORD=change-this-at-clinic docker compose up -d postgres
+POSTGRES_PASSWORD=change-this-at-clinic docker compose run --rm erp npm run db:seed
+POSTGRES_PASSWORD=change-this-at-clinic docker compose up -d erp
 ```
+
+Run the seed command once for a fresh test database. After real clinic data is
+entered, do not re-seed unless you intentionally want to refresh starter rows.
 
 Direct migration/seed commands:
 
