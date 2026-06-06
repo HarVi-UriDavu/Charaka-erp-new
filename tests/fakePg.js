@@ -22,6 +22,9 @@ export function fakePgState(overrides = {}) {
     doctors: [
       { id: "D01", name: "Dr. Test", active: true }
     ],
+    suppliers: [
+      { id: "SUP01", name: "Test Supplier", active: true }
+    ],
     patients: [
       {
         id: "P001",
@@ -43,8 +46,12 @@ export function fakePgState(overrides = {}) {
       { id: "S01", name: "Consultation", rate: 400, gst: 0, active: true }
     ],
     drugs: [
-      { id: "DR01", name: "Paracetamol Syrup" },
-      { id: "DR02", name: "Amoxicillin 250 Syrup" }
+      { id: "DR01", name: "Paracetamol Syrup", mrp: 48, gst: 12, active: true },
+      { id: "DR02", name: "Amoxicillin 250 Syrup", mrp: 88, gst: 12, active: true }
+    ],
+    drugBatches: [
+      { id: "B001", drug_id: "DR01", batch: "PCS2410", expiry: "2027-01-10", qty: 38, purchase_rate: 38, mrp: 48 },
+      { id: "B002", drug_id: "DR02", batch: "AMX2503", expiry: "2026-09-08", qty: 14, purchase_rate: 66, mrp: 88 }
     ],
     visits: [],
     vitals: [],
@@ -53,6 +60,13 @@ export function fakePgState(overrides = {}) {
     invoices: [],
     invoiceItems: [],
     payments: [],
+    purchases: [],
+    purchaseItems: [],
+    pharmacySales: [],
+    saleItems: [],
+    salesReturns: [],
+    returnItems: [],
+    stockMovements: [],
     auditLogs: [],
     ...overrides
   };
@@ -110,6 +124,39 @@ export function fakeDb(state = fakePgState()) {
       }
       if (text.includes("from doctors")) return { rows: state.doctors.filter((d) => d.id === params[0] && d.active) };
       if (text.includes("from services")) return { rows: state.services.filter((s) => params[0].includes(s.id) && s.active) };
+      if (text.includes("from suppliers")) return { rows: state.suppliers.filter((s) => s.id === params[0] && s.active) };
+      if (text.includes("from drugs") && text.includes("active = true")) return { rows: state.drugs.filter((d) => d.id === params[0] && d.active) };
+      if (text.includes("from drug_batches") && text.includes("drug_id = $1") && text.includes("batch = $2")) {
+        return { rows: state.drugBatches.filter((b) => b.drug_id === params[0] && b.batch === params[1]) };
+      }
+      if (text.includes("count(*)::int as count from drug_batches")) return { rows: [{ count: state.drugBatches.length }] };
+      if (text.startsWith("insert into drug_batches")) {
+        const batch = { id: params[0], drug_id: params[1], batch: params[2], expiry: params[3], qty: 0, purchase_rate: params[4], mrp: params[5] };
+        state.drugBatches.push(batch);
+        return { rows: [batch] };
+      }
+      if (text.startsWith("update drug_batches") && text.includes("qty = qty +")) {
+        const batch = state.drugBatches.find((b) => b.id === params[0]);
+        if (batch) batch.qty += Number(params[1]);
+        return { rows: [] };
+      }
+      if (text.startsWith("update drug_batches") && text.includes("qty = qty -")) {
+        const batch = state.drugBatches.find((b) => b.id === params[0]);
+        if (batch) batch.qty -= Number(params[1]);
+        return { rows: [] };
+      }
+      if (text.startsWith("update drug_batches") && text.includes("purchase_rate")) {
+        const batch = state.drugBatches.find((b) => b.id === params[0]);
+        if (batch) {
+          batch.expiry = params[1];
+          batch.purchase_rate = params[2];
+          batch.mrp = params[3];
+        }
+        return { rows: [] };
+      }
+      if (text.includes("from drug_batches") && text.includes("where id = $1 and drug_id = $2")) {
+        return { rows: state.drugBatches.filter((b) => b.id === params[0] && b.drug_id === params[1]) };
+      }
       if (text.startsWith("insert into visits")) {
         const visit = {
           id: params[0],
@@ -150,7 +197,10 @@ export function fakeDb(state = fakePgState()) {
         return { rows: [] };
       }
       if (text.startsWith("insert into invoices")) {
-        const invoice = { id: params[0], kind: params[1], ref_id: params[2], voucher_no: params[3], party_id: params[4], invoice_at: params[5], total: params[6] };
+        const literalKind = text.includes("values ($1, 'PHARMACY'") ? "PHARMACY" : text.includes("values ($1, 'OPD'") ? "OPD" : null;
+        const invoice = literalKind
+          ? { id: params[0], kind: literalKind, ref_id: params[1], voucher_no: params[2], party_id: params[3], invoice_at: params[4], total: params[5] }
+          : { id: params[0], kind: params[1], ref_id: params[2], voucher_no: params[3], party_id: params[4], invoice_at: params[5], total: params[6] };
         state.invoices.unshift(invoice);
         return { rows: [invoice] };
       }
@@ -160,6 +210,46 @@ export function fakeDb(state = fakePgState()) {
       }
       if (text.startsWith("insert into payments")) {
         state.payments.push({ invoice_id: params[0], mode: params[1], amount: params[2], paid_at: params[3] });
+        return { rows: [] };
+      }
+      if (text.startsWith("insert into purchases")) {
+        state.purchases.unshift({ id: params[0], voucher_no: params[1], supplier_id: params[2], invoice_no: params[3], purchase_at: params[4], total: 0, created_by: params[5] });
+        return { rows: [] };
+      }
+      if (text.startsWith("insert into purchase_items")) {
+        state.purchaseItems.push({ purchase_id: params[0], drug_id: params[1], batch_id: params[2], qty: params[3], rate: params[4], gst: params[5], mrp: params[6] });
+        return { rows: [] };
+      }
+      if (text.startsWith("update purchases")) {
+        const purchase = state.purchases.find((p) => p.id === params[0]);
+        if (purchase) purchase.total = params[1];
+        return { rows: [] };
+      }
+      if (text.startsWith("insert into stock_movements")) {
+        state.stockMovements.unshift({ id: params[0], kind: params[1], ref_id: params[2], drug_id: params[3], batch_id: params[4], qty: params[5], note: params[6], created_by: params[7] });
+        return { rows: [] };
+      }
+      if (text.startsWith("insert into pharmacy_sales")) {
+        state.pharmacySales.unshift({ id: params[0], voucher_no: params[1], patient_id: params[2], linked_visit_id: params[3], sale_at: params[4], total: params[5], status: "paid", created_by: params[6] });
+        return { rows: [] };
+      }
+      if (text.startsWith("insert into sale_items")) {
+        state.saleItems.push({ sale_id: params[0], drug_id: params[1], batch_id: params[2], name: params[3], qty: params[4], rate: params[5], gst: params[6] });
+        return { rows: [] };
+      }
+      if (text.includes("from pharmacy_sales")) return { rows: state.pharmacySales.filter((s) => s.id === params[0]) };
+      if (text.includes("from sale_items")) return { rows: state.saleItems.filter((it) => it.sale_id === params[0] && it.drug_id === params[1] && it.batch_id === params[2]) };
+      if (text.startsWith("insert into sales_returns")) {
+        state.salesReturns.unshift({ id: params[0], voucher_no: params[1], sale_id: params[2], reason: params[3], return_at: params[4], amount: 0, created_by: params[5] });
+        return { rows: [] };
+      }
+      if (text.startsWith("insert into return_items")) {
+        state.returnItems.push({ return_id: params[0], drug_id: params[1], batch_id: params[2], qty: params[3], rate: params[4], gst: params[5] });
+        return { rows: [] };
+      }
+      if (text.startsWith("update sales_returns")) {
+        const ret = state.salesReturns.find((r) => r.id === params[0]);
+        if (ret) ret.amount = params[1];
         return { rows: [] };
       }
       if (text.startsWith("delete from prescriptions")) {
