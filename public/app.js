@@ -256,8 +256,8 @@ function bindClinical() {
     const payload = {
       status: "done",
       notes: byId("clinicalNotes").value,
-      followUpDate: byId("followUpDate").value,
-      followUpReason: byId("followUpReason").value,
+      followUpDate: document.querySelector("[name=followUpDate]").value,
+      followUpReason: document.querySelector("[name=followUpReason]").value,
       vitals: formValues("clinicalVitals"),
       prescription: [...document.querySelectorAll("[data-rx-row]")].map((row) => ({
         drugId: row.querySelector("[name=drugId]").value,
