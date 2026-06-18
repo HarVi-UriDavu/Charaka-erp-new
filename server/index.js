@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createPool } from "./db.js";
 import { PgAppStore } from "./pgAppStore.js";
+import { startRelayClient } from "./relayClient.js";
 import { ClinicStore, httpError } from "./store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -14,6 +15,7 @@ const store = pool ? new PgAppStore(pool) : new ClinicStore();
 const port = Number(process.env.PORT || 4173);
 const host = process.env.HOST || "0.0.0.0";
 const backendLabel = pool ? "PostgreSQL" : "JSON";
+startRelayClient(store);
 
 const server = http.createServer(async (req, res) => {
   try {
@@ -39,6 +41,10 @@ async function handleApi(req, res) {
   }
   if (req.method === "POST" && url.pathname === "/api/login") return sendJson(res, 200, await store.login(body));
   if (req.method === "POST" && url.pathname === "/api/patients") return sendJson(res, 201, await store.addPatient(body, userId));
+  if (req.method === "PATCH" && /^\/api\/patients\/[^/]+\/whatsapp$/.test(url.pathname)) {
+    const id = url.pathname.split("/")[3];
+    return sendJson(res, 200, await store.updatePatientWhatsApp(id, body, userId));
+  }
   if (req.method === "POST" && url.pathname === "/api/visits") return sendJson(res, 201, await store.createVisit(body, userId));
   if (req.method === "PATCH" && url.pathname.startsWith("/api/visits/")) {
     const id = url.pathname.split("/").at(-1);
@@ -51,7 +57,21 @@ async function handleApi(req, res) {
   if (req.method === "POST" && url.pathname === "/api/admin/drugs") return sendJson(res, 201, await store.addDrug(body, userId));
   if (req.method === "POST" && url.pathname === "/api/admin/suppliers") return sendJson(res, 201, await store.addSupplier(body, userId));
   if (req.method === "POST" && url.pathname === "/api/admin/users") return sendJson(res, 201, await store.addUser(body, userId));
+  if (req.method === "POST" && url.pathname === "/api/admin/vaccines") return sendJson(res, 201, await store.addVaccine(body, userId));
   if (req.method === "POST" && url.pathname === "/api/admin/opening-stock") return sendJson(res, 201, await store.addOpeningStock(body, userId));
+  if (req.method === "POST" && url.pathname === "/api/vaccinations") return sendJson(res, 201, await store.recordVaccination(body, userId));
+  if (req.method === "POST" && /^\/api\/whatsapp\/[^/]+\/resend$/.test(url.pathname)) {
+    const id = url.pathname.split("/")[3];
+    return sendJson(res, 201, await store.resendWhatsApp(id, userId));
+  }
+  if (req.method === "GET" && /^\/api\/whatsapp\/[^/]+\/document\.pdf$/.test(url.pathname)) {
+    const id = url.pathname.split("/")[3];
+    return sendPdf(res, await store.whatsappDocument(id), `charaka-${id}.pdf`);
+  }
+  if (req.method === "PATCH" && /^\/api\/callbacks\/[^/]+\/close$/.test(url.pathname)) {
+    const id = url.pathname.split("/")[3];
+    return sendJson(res, 200, await store.closeCallback(id, userId));
+  }
   if (req.method === "PATCH" && url.pathname === "/api/settings/clinic") return sendJson(res, 200, await store.updateClinicSettings(body, userId));
   if (req.method === "POST" && url.pathname.startsWith("/api/import/")) {
     const entity = url.pathname.split("/").at(-1);
@@ -81,6 +101,14 @@ async function readJson(req) {
 function sendJson(res, status, data) {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(data));
+}
+
+function sendPdf(res, data, filename) {
+  res.writeHead(200, {
+    "content-type": "application/pdf",
+    "content-disposition": `inline; filename="${filename}"`
+  });
+  res.end(data);
 }
 
 function serveStatic(req, res) {

@@ -75,6 +75,13 @@ create table if not exists patients (
   updated_at timestamptz not null default now()
 );
 
+alter table patients add column if not exists whatsapp_consent boolean not null default false;
+alter table patients add column if not exists whatsapp_consent_at timestamptz;
+alter table patients add column if not exists whatsapp_consent_by text references users(id);
+alter table patients add column if not exists whatsapp_language text not null default 'en' check (whatsapp_language in ('en', 'te'));
+alter table patients add column if not exists whatsapp_opted_out boolean not null default false;
+alter table patients add column if not exists whatsapp_number_confirmed boolean not null default false;
+
 create table if not exists patient_weight_history (
   id bigserial primary key,
   patient_id text not null references patients(id) on delete cascade,
@@ -110,6 +117,9 @@ create table if not exists visits (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table visits add column if not exists follow_up_date date;
+alter table visits add column if not exists follow_up_reason text not null default '';
 
 create table if not exists vitals (
   id bigserial primary key,
@@ -312,6 +322,91 @@ create table if not exists backup_jobs (
   created_at timestamptz not null default now()
 );
 
+create table if not exists vaccines (
+  id text primary key,
+  code text not null unique,
+  name text not null,
+  description text not null default '',
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists vaccinations (
+  id text primary key,
+  patient_id text not null references patients(id),
+  vaccine_id text not null references vaccines(id),
+  administered_at date not null,
+  batch_no text not null default '',
+  administered_by text references users(id),
+  next_vaccine_id text references vaccines(id),
+  next_due_date date,
+  notes text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists whatsapp_outbox (
+  id text primary key,
+  patient_id text references patients(id),
+  phone text not null,
+  language text not null default 'en' check (language in ('en', 'te')),
+  kind text not null check (kind in ('document', 'followup_reminder', 'vaccine_reminder', 'menu_reply')),
+  template_name text not null,
+  ref_type text not null,
+  ref_id text not null,
+  document_kind text check (document_kind in ('opd_receipt', 'prescription', 'pharmacy_invoice')),
+  idempotency_key text not null unique,
+  payload jsonb not null default '{}',
+  scheduled_for timestamptz not null default now(),
+  status text not null check (status in ('blocked_no_consent', 'queued', 'sent', 'delivered', 'read', 'failed', 'opted_out')),
+  attempts integer not null default 0,
+  external_id text,
+  last_error text not null default '',
+  created_by text references users(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists whatsapp_delivery_events (
+  id bigserial primary key,
+  outbox_id text references whatsapp_outbox(id) on delete set null,
+  external_id text,
+  event_type text not null,
+  event_at timestamptz not null default now(),
+  payload jsonb not null default '{}',
+  unique (external_id, event_type, event_at)
+);
+
+create table if not exists reminder_jobs (
+  id text primary key,
+  patient_id text not null references patients(id),
+  kind text not null check (kind in ('followup', 'vaccine')),
+  ref_type text not null,
+  ref_id text not null,
+  due_date date not null,
+  remind_at timestamptz not null,
+  offset_days integer not null,
+  status text not null default 'pending' check (status in ('pending', 'queued', 'sent', 'cancelled', 'failed')),
+  outbox_id text references whatsapp_outbox(id),
+  idempotency_key text not null unique,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists callback_requests (
+  id text primary key,
+  patient_id text references patients(id),
+  phone text not null,
+  language text not null default 'en' check (language in ('en', 'te')),
+  status text not null default 'open' check (status in ('open', 'contacted', 'closed')),
+  source_message_id text,
+  notes text not null default '',
+  requested_at timestamptz not null default now(),
+  handled_by text references users(id),
+  handled_at timestamptz
+);
+
 create table if not exists audit_logs (
   id text primary key,
   at timestamptz not null default now(),
@@ -332,6 +427,11 @@ create index if not exists invoices_kind_day_idx on invoices (kind, invoice_at d
 create index if not exists drug_batches_drug_expiry_idx on drug_batches (drug_id, expiry);
 create index if not exists stock_movements_batch_idx on stock_movements (batch_id, movement_at desc);
 create index if not exists audit_logs_at_idx on audit_logs (at desc);
+create index if not exists whatsapp_outbox_status_due_idx on whatsapp_outbox (status, scheduled_for);
+create index if not exists whatsapp_outbox_patient_idx on whatsapp_outbox (patient_id, created_at desc);
+create index if not exists reminder_jobs_due_idx on reminder_jobs (status, remind_at);
+create index if not exists vaccinations_patient_idx on vaccinations (patient_id, administered_at desc);
+create index if not exists callback_requests_status_idx on callback_requests (status, requested_at desc);
 
 insert into permissions (id, name, description) values
   ('dashboard', 'Dashboard', 'View operational dashboard'),
@@ -339,6 +439,7 @@ insert into permissions (id, name, description) values
   ('clinical', 'Clinical', 'View doctor queue and save clinical notes'),
   ('pharmacy', 'Pharmacy', 'Manage pharmacy sales, purchases, stock, and returns'),
   ('billing', 'Billing', 'View daybook and collections'),
+  ('messages', 'Messages', 'Manage WhatsApp delivery and callback requests'),
   ('reports', 'Reports', 'View reports and audit data'),
   ('masters', 'Masters', 'Manage master data and imports'),
   ('settings', 'Settings', 'Manage clinic settings and backups')
@@ -355,10 +456,10 @@ insert into role_permissions (role_id, permission_id)
 select role_id, permission_id
 from (values
   ('doctor', 'dashboard'), ('doctor', 'clinical'), ('doctor', 'reception'), ('doctor', 'reports'),
-  ('reception', 'dashboard'), ('reception', 'reception'), ('reception', 'billing'),
-  ('pharmacist', 'dashboard'), ('pharmacist', 'pharmacy'), ('pharmacist', 'billing'),
+  ('reception', 'dashboard'), ('reception', 'reception'), ('reception', 'billing'), ('reception', 'messages'),
+  ('pharmacist', 'dashboard'), ('pharmacist', 'pharmacy'), ('pharmacist', 'billing'), ('pharmacist', 'messages'),
   ('admin', 'dashboard'), ('admin', 'reception'), ('admin', 'clinical'), ('admin', 'pharmacy'),
-  ('admin', 'billing'), ('admin', 'reports'), ('admin', 'masters'), ('admin', 'settings')
+  ('admin', 'billing'), ('admin', 'messages'), ('admin', 'reports'), ('admin', 'masters'), ('admin', 'settings')
 ) as rp(role_id, permission_id)
 on conflict do nothing;
 
@@ -371,7 +472,12 @@ insert into sequences (key, value) values
   ('invoice', 200),
   ('audit', 1),
   ('stock', 1),
-  ('importJob', 1)
+  ('importJob', 1),
+  ('whatsapp', 0),
+  ('reminder', 0),
+  ('vaccine', 0),
+  ('vaccination', 0),
+  ('callback', 0)
 on conflict (key) do nothing;
 
 commit;

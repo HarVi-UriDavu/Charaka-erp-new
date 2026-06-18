@@ -11,6 +11,7 @@ Operations-first local clinic ERP MVP built from the prototype plan.
 - CSV imports for patients, services, drugs, suppliers, and opening stock.
 - Local backup action and Docker deployment files.
 - PostgreSQL target schema and Docker database service.
+- WhatsApp outbox, server-generated PDF documents, consent controls, follow-up and vaccine reminders.
 
 ## Start
 
@@ -67,3 +68,9 @@ DATABASE_URL=postgresql://charaka:change-this-at-clinic@localhost:5432/charaka n
 ```
 
 See `database/README.md` for the backend migration sequence.
+
+## WhatsApp Messaging
+
+The ERP includes the local WhatsApp messaging workflow and a deployable Cloudflare relay in `cloudflare-relay/`.
+
+It does not send real messages until Meta templates, a WhatsApp number, Cloudflare resources, and secrets are configured. Follow [`docs/WHATSAPP_SETUP.md`](docs/WHATSAPP_SETUP.md).

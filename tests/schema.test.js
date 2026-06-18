@@ -27,6 +27,12 @@ test("PostgreSQL schema includes core ERP tables", () => {
     "sales_returns",
     "import_jobs",
     "backup_jobs",
+    "vaccines",
+    "vaccinations",
+    "whatsapp_outbox",
+    "whatsapp_delivery_events",
+    "reminder_jobs",
+    "callback_requests",
     "audit_logs"
   ];
   for (const table of tables) {
@@ -38,4 +44,6 @@ test("PostgreSQL schema keeps finance and stock guardrails", () => {
   assert.match(schema, /check \(status in \('waiting', 'in-consult', 'done', 'cancelled'\)\)/);
   assert.match(schema, /check \(kind in \('OPENING', 'PURCHASE', 'SALE', 'RETURN', 'ADJUSTMENT'\)\)/);
   assert.match(schema, /unique \(drug_id, batch\)/);
+  assert.match(schema, /idempotency_key text not null unique/);
+  assert.match(schema, /blocked_no_consent/);
 });

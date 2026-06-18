@@ -11,6 +11,7 @@
     "db:seed": "node database/seed.js"
   },
   "dependencies": {
+    "pdfkit": "^0.17.2",
     "pg": "^8.13.1"
   },
   "engines": {

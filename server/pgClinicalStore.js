@@ -18,11 +18,13 @@ export class PgClinicalStore {
         `update visits
          set status = 'done',
              notes = $2,
-             updated_by = $3,
+             follow_up_date = $3,
+             follow_up_reason = $4,
+             updated_by = $5,
              updated_at = now()
          where id = $1
          returning *`,
-        [id, input.notes || "", userId]
+        [id, input.notes || "", input.followUpDate || null, input.followUpReason || "", userId]
       );
       if (Object.keys(vitals).length) {
         await db.query(
@@ -67,6 +69,8 @@ export class PgClinicalStore {
         status: "done",
         vitals: { ...vitals },
         notes: input.notes || "",
+        followUpDate: input.followUpDate || null,
+        followUpReason: input.followUpReason || "",
         prescription
       };
     });

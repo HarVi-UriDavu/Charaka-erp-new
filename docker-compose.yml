@@ -11,6 +11,9 @@ services:
     environment:
       - PORT=4173
       - DATABASE_URL=postgresql://charaka:${POSTGRES_PASSWORD:-charaka-dev-password}@postgres:5432/charaka
+      - WHATSAPP_RELAY_URL=${WHATSAPP_RELAY_URL:-}
+      - WHATSAPP_RELAY_TOKEN=${WHATSAPP_RELAY_TOKEN:-}
+      - WHATSAPP_SYNC_INTERVAL_MS=${WHATSAPP_SYNC_INTERVAL_MS:-30000}
     depends_on:
       - postgres
 

@@ -38,7 +38,13 @@ export function fakePgState(overrides = {}) {
         guardian_name: "Suresh Kumar",
         address: "Guntur",
         blood_group: "O+",
-        allergies: "Nil known"
+        allergies: "Nil known",
+        whatsapp_consent: true,
+        whatsapp_consent_at: "2026-06-01T09:00:00.000Z",
+        whatsapp_consent_by: "U02",
+        whatsapp_language: "en",
+        whatsapp_opted_out: false,
+        whatsapp_number_confirmed: true
       }
     ],
     patientWeights: [],
@@ -69,6 +75,15 @@ export function fakePgState(overrides = {}) {
     stockMovements: [],
     importJobs: [],
     backupJobs: [],
+    vaccines: [
+      { id: "VAC001", code: "BCG", name: "BCG", description: "", active: true },
+      { id: "VAC002", code: "MMR", name: "MMR", description: "", active: true }
+    ],
+    vaccinations: [],
+    whatsappOutbox: [],
+    reminderJobs: [],
+    callbackRequests: [],
+    deliveryEvents: [],
     auditLogs: [],
     ...overrides
   };
@@ -98,9 +113,11 @@ export function fakeDb(state = fakePgState()) {
         return { rows: state.users.map((u) => ({ id: u.id, name: u.name, role: u.role, active: u.active })) };
       }
       if (text.includes("from role_permissions")) return { rows: state.rolePermissions };
+      if (text.includes("from app_settings") && text.includes("whatsapp_relay_cursor")) return { rows: [{ value: state.relayCursor || { cursor: "0" } }] };
       if (text.includes("from app_settings")) return { rows: [{ value: state.settings }] };
       if (text.startsWith("insert into app_settings")) {
-        state.settings = JSON.parse(params[0]);
+        if (text.includes("whatsapp_relay_cursor")) state.relayCursor = JSON.parse(params[0]);
+        else state.settings = JSON.parse(params[0]);
         return { rows: [] };
       }
       if (text.includes("from invoices i") && text.includes("left join payments") && text.includes("where i.invoice_at::date")) {
@@ -173,6 +190,9 @@ export function fakeDb(state = fakePgState()) {
       if (text.includes("from patients") && text.includes("where id = $1")) {
         return { rows: state.patients.filter((p) => p.id === params[0]) };
       }
+      if (text.includes("from patients") && text.includes("where mobile = $1")) {
+        return { rows: state.patients.filter((p) => p.mobile === String(params[0]).slice(-10)).map((p) => ({ id: p.id, whatsapp_language: p.whatsapp_language || "en" })) };
+      }
       if (text.includes("from patients") && text.includes("where active = true")) {
         return {
           rows: state.patients.map((p) => ({
@@ -187,7 +207,12 @@ export function fakeDb(state = fakePgState()) {
             guardianName: p.guardianName || p.guardian_name,
             address: p.address,
             bloodGroup: p.bloodGroup || p.blood_group,
-            allergies: p.allergies
+            allergies: p.allergies,
+            whatsappConsent: p.whatsappConsent ?? p.whatsapp_consent,
+            whatsappConsentAt: p.whatsappConsentAt ?? p.whatsapp_consent_at,
+            whatsappLanguage: p.whatsappLanguage || p.whatsapp_language || "en",
+            whatsappOptedOut: p.whatsappOptedOut ?? p.whatsapp_opted_out,
+            whatsappNumberConfirmed: p.whatsappNumberConfirmed ?? p.whatsapp_number_confirmed
           }))
         };
       }
@@ -204,13 +229,33 @@ export function fakeDb(state = fakePgState()) {
           guardian_name: params[8],
           address: params[9],
           blood_group: params[10],
-          allergies: params[11]
+          allergies: params[11],
+          whatsapp_consent: Boolean(params[12]),
+          whatsapp_consent_at: params[12] ? new Date().toISOString() : null,
+          whatsapp_consent_by: params[12] ? params[13] : null,
+          whatsapp_language: params[14] || "en",
+          whatsapp_opted_out: false,
+          whatsapp_number_confirmed: Boolean(params[15])
         };
         state.patients.unshift(patient);
         return { rows: [patient] };
       }
       if (text.includes("from patient_weight_history") && text.includes("order by recorded_at")) {
         return { rows: state.patientWeights.map((w) => ({ patientId: w.patient_id, date: w.recorded_at, w: w.weight_kg })) };
+      }
+      if (text.startsWith("update patients") && text.includes("whatsapp_consent =")) {
+        const patient = state.patients.find((p) => p.id === params[0]);
+        if (!patient) return { rows: [] };
+        patient.whatsapp_consent = params[1];
+        patient.whatsapp_consent_at = params[1] ? patient.whatsapp_consent_at || new Date().toISOString() : null;
+        patient.whatsapp_consent_by = params[1] ? params[2] : null;
+        patient.whatsapp_language = params[3];
+        patient.whatsapp_number_confirmed = params[4];
+        return { rows: [{ id: patient.id, whatsappConsent: patient.whatsapp_consent, whatsappConsentAt: patient.whatsapp_consent_at, whatsappLanguage: patient.whatsapp_language, whatsappOptedOut: patient.whatsapp_opted_out, whatsappNumberConfirmed: patient.whatsapp_number_confirmed }] };
+      }
+      if (text.startsWith("update patients") && text.includes("whatsapp_opted_out")) {
+        for (const patient of state.patients.filter((p) => p.mobile === params[0])) patient.whatsapp_opted_out = params[1];
+        return { rows: [] };
       }
       if (text.includes("from doctors") && text.includes("order by id")) {
         return {
@@ -358,7 +403,9 @@ export function fakeDb(state = fakePgState()) {
         if (visit) {
           visit.status = "done";
           visit.notes = params[1];
-          visit.updated_by = params[2];
+          visit.follow_up_date = params[2];
+          visit.follow_up_reason = params[3];
+          visit.updated_by = params[4];
         }
         return { rows: visit ? [visit] : [] };
       }
@@ -382,6 +429,19 @@ export function fakeDb(state = fakePgState()) {
       }
       if (text.includes("from prescriptions") && text.includes("order by id")) {
         return { rows: state.prescriptions.map((rx) => ({ visitId: rx.visit_id, drugId: rx.drug_id, name: rx.name, dose: rx.dose, frequency: rx.frequency, days: rx.days, qty: rx.qty, notes: rx.notes || "" })) };
+      }
+      if (text.includes("from vaccines") && text.includes("order by name")) return { rows: state.vaccines };
+      if (text.includes("from vaccinations") && text.includes("order by administered_at")) {
+        return { rows: state.vaccinations.map((v) => ({ id: v.id, patientId: v.patient_id, vaccineId: v.vaccine_id, administeredAt: v.administered_at, batchNo: v.batch_no, administeredBy: v.administered_by, nextVaccineId: v.next_vaccine_id, nextDueDate: v.next_due_date, notes: v.notes })) };
+      }
+      if (text.includes("from vaccines") && text.includes("where id = $1")) return { rows: state.vaccines.filter((v) => v.id === params[0] && v.active) };
+      if (text.startsWith("insert into vaccines")) {
+        state.vaccines.push({ id: params[0], code: params[1], name: params[2], description: params[3], active: params[4] });
+        return { rows: [] };
+      }
+      if (text.startsWith("insert into vaccinations")) {
+        state.vaccinations.unshift({ id: params[0], patient_id: params[1], vaccine_id: params[2], administered_at: params[3], batch_no: params[4], administered_by: params[5], next_vaccine_id: params[6], next_due_date: params[7], notes: params[8] });
+        return { rows: [] };
       }
       if (text.startsWith("insert into invoices")) {
         const literalKind = text.includes("values ($1, 'PHARMACY'") ? "PHARMACY" : text.includes("values ($1, 'OPD'") ? "OPD" : null;
@@ -428,6 +488,90 @@ export function fakeDb(state = fakePgState()) {
         const job = { id: state.backupJobs.length + 1, kind: params[0], filePath: params[1], status: params[2], details: JSON.parse(params[3]), created_by: params[4], createdAt: new Date().toISOString() };
         state.backupJobs.unshift(job);
         return { rows: [job] };
+      }
+      if (text.includes("from whatsapp_outbox") && text.includes("order by created_at desc")) {
+        return { rows: state.whatsappOutbox.slice(0, params[0]).map(mapOutbox) };
+      }
+      if (text.includes("from callback_requests") && text.includes("order by requested_at desc")) {
+        return { rows: state.callbackRequests.slice(0, params[0]).map((r) => ({ id: r.id, patientId: r.patient_id, phone: r.phone, language: r.language, status: r.status, sourceMessageId: r.source_message_id, notes: r.notes, requestedAt: r.requested_at, handledBy: r.handled_by, handledAt: r.handled_at })) };
+      }
+      if (text.startsWith("insert into whatsapp_outbox")) {
+        const existing = state.whatsappOutbox.find((row) => row.idempotency_key === params[9]);
+        if (existing) return { rows: [mapOutbox(existing)] };
+        const row = {
+          id: params[0], patient_id: params[1], phone: params[2], language: params[3], kind: params[4],
+          template_name: params[5], ref_type: params[6], ref_id: params[7], document_kind: params[8],
+          idempotency_key: params[9], payload: JSON.parse(params[10]), scheduled_for: params[11],
+          status: params[12], attempts: 0, external_id: null, last_error: "", created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+        state.whatsappOutbox.unshift(row);
+        return { rows: [mapOutbox(row)] };
+      }
+      if (text.includes("from whatsapp_outbox") && text.includes("status in ('queued', 'failed')")) {
+        return { rows: state.whatsappOutbox.filter((r) => ["queued", "failed"].includes(r.status) && r.attempts < 5).slice(0, params[0]).map(mapOutbox) };
+      }
+      if (text.includes("from whatsapp_outbox") && text.includes("where id = $1")) {
+        return { rows: state.whatsappOutbox.filter((r) => r.id === params[0]) };
+      }
+      if (text.includes("from whatsapp_outbox") && text.includes("external_id = $1")) {
+        return { rows: state.whatsappOutbox.filter((r) => r.external_id === params[0]) };
+      }
+      if (text.startsWith("update whatsapp_outbox") && text.includes("status = 'sent'")) {
+        const row = state.whatsappOutbox.find((r) => r.id === params[0]);
+        if (row) { row.status = "sent"; row.external_id = params[1]; row.attempts += 1; row.last_error = ""; }
+        return { rows: row ? [row] : [] };
+      }
+      if (text.startsWith("update whatsapp_outbox") && text.includes("status = 'failed'")) {
+        const row = state.whatsappOutbox.find((r) => r.id === params[0]);
+        if (row) { row.status = "failed"; row.attempts += 1; row.last_error = params[1]; }
+        return { rows: row ? [row] : [] };
+      }
+      if (text.startsWith("update whatsapp_outbox") && text.includes("set status = $2")) {
+        const row = state.whatsappOutbox.find((r) => r.id === params[0]);
+        if (row) { row.status = params[1]; row.external_id = params[2] || row.external_id; row.last_error = params[3]; }
+        return { rows: [] };
+      }
+      if (text.startsWith("update whatsapp_outbox") && text.includes("status = 'opted_out'")) {
+        for (const row of state.whatsappOutbox.filter((r) => r.phone === params[0] && ["queued", "failed"].includes(r.status))) row.status = "opted_out";
+        return { rows: [] };
+      }
+      if (text.startsWith("update whatsapp_outbox") && text.includes("status = 'queued'")) {
+        for (const row of state.whatsappOutbox.filter((r) => (r.patient_id === params[0] && r.status === "blocked_no_consent") || (r.phone === params[0] && r.status === "opted_out"))) row.status = "queued";
+        return { rows: [] };
+      }
+      if (text.startsWith("insert into whatsapp_delivery_events")) {
+        state.deliveryEvents.push({ outbox_id: params[0], external_id: params[1], event_type: params[2], event_at: params[3], payload: JSON.parse(params[4]) });
+        return { rows: [] };
+      }
+      if (text.startsWith("delete from reminder_jobs")) {
+        state.reminderJobs = state.reminderJobs.filter((r) => !(r.ref_id === params[0] && r.ref_type === "visit" && r.kind === "followup" && r.status === "pending"));
+        return { rows: [] };
+      }
+      if (text.startsWith("insert into reminder_jobs")) {
+        const existing = state.reminderJobs.find((r) => r.idempotency_key === params[8]);
+        if (existing) return { rows: [mapReminder(existing)] };
+        const row = { id: params[0], patient_id: params[1], kind: params[2], ref_type: params[3], ref_id: params[4], due_date: params[5], remind_at: params[6], offset_days: params[7], idempotency_key: params[8], status: "pending" };
+        state.reminderJobs.push(row);
+        return { rows: [mapReminder(row)] };
+      }
+      if (text.includes("from reminder_jobs") && text.includes("remind_at <= now()")) {
+        return { rows: state.reminderJobs.filter((r) => r.status === "pending").slice(0, params[0]).map(mapReminder) };
+      }
+      if (text.startsWith("update reminder_jobs")) {
+        const row = state.reminderJobs.find((r) => r.id === params[0]);
+        if (row) { row.status = params[1]; row.outbox_id = params[2]; }
+        return { rows: [] };
+      }
+      if (text.startsWith("insert into callback_requests")) {
+        const row = { id: params[0], patient_id: params[1], phone: params[2], language: params[3], status: "open", source_message_id: params[4], notes: params[5], requested_at: params[6] };
+        state.callbackRequests.unshift(row);
+        return { rows: [{ id: row.id, patientId: row.patient_id, phone: row.phone, language: row.language, status: row.status, requestedAt: row.requested_at }] };
+      }
+      if (text.startsWith("update callback_requests")) {
+        const row = state.callbackRequests.find((r) => r.id === params[0]);
+        if (row) { row.status = "closed"; row.handled_by = params[1]; row.handled_at = new Date().toISOString(); }
+        return { rows: row ? [{ id: row.id, status: row.status }] : [] };
       }
       if (text.startsWith("insert into pharmacy_sales")) {
         state.pharmacySales.unshift({ id: params[0], voucher_no: params[1], patient_id: params[2], linked_visit_id: params[3], sale_at: params[4], total: params[5], status: "paid", created_by: params[6] });
@@ -494,4 +638,41 @@ export function fakeDb(state = fakePgState()) {
 
 function sameDay(value, date) {
   return new Date(value).toISOString().slice(0, 10) === date;
+}
+
+function mapOutbox(row) {
+  return {
+    id: row.id,
+    patientId: row.patient_id,
+    phone: row.phone,
+    language: row.language,
+    kind: row.kind,
+    templateName: row.template_name,
+    refType: row.ref_type,
+    refId: row.ref_id,
+    documentKind: row.document_kind,
+    idempotencyKey: row.idempotency_key,
+    payload: row.payload,
+    scheduledFor: row.scheduled_for,
+    status: row.status,
+    attempts: row.attempts,
+    externalId: row.external_id,
+    lastError: row.last_error,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function mapReminder(row) {
+  return {
+    id: row.id,
+    patientId: row.patient_id,
+    kind: row.kind,
+    refType: row.ref_type,
+    refId: row.ref_id,
+    dueDate: row.due_date,
+    remindAt: row.remind_at,
+    offsetDays: row.offset_days,
+    status: row.status
+  };
 }

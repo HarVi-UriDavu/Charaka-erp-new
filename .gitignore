@@ -1,6 +1,7 @@
 data/
 backups/
 node_modules/
+.env
 .DS_Store
 *.log
 __pycache__/

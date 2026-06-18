@@ -14,6 +14,7 @@ try {
     await seedServices(db);
     await seedSuppliers(db);
     await seedDrugsAndBatches(db);
+    await seedVaccines(db);
     await seedPatients(db);
     await seedVisitsAndInvoices(db);
     await seedStockMovements(db);
@@ -150,8 +151,11 @@ async function seedDrugsAndBatches(db) {
 async function seedPatients(db) {
   for (const patient of seed.patients) {
     await db.query(
-      `insert into patients (id, uhid, first_name, last_name, gender, dob, mobile, guardian_rel, guardian_name, address, blood_group, allergies)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      `insert into patients
+         (id, uhid, first_name, last_name, gender, dob, mobile, guardian_rel, guardian_name,
+          address, blood_group, allergies, whatsapp_consent, whatsapp_consent_at,
+          whatsapp_consent_by, whatsapp_language, whatsapp_opted_out, whatsapp_number_confirmed)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
        on conflict (id) do update set
          uhid = excluded.uhid,
          first_name = excluded.first_name,
@@ -164,8 +168,14 @@ async function seedPatients(db) {
          address = excluded.address,
          blood_group = excluded.blood_group,
          allergies = excluded.allergies,
+         whatsapp_consent = excluded.whatsapp_consent,
+         whatsapp_consent_at = excluded.whatsapp_consent_at,
+         whatsapp_consent_by = excluded.whatsapp_consent_by,
+         whatsapp_language = excluded.whatsapp_language,
+         whatsapp_opted_out = excluded.whatsapp_opted_out,
+         whatsapp_number_confirmed = excluded.whatsapp_number_confirmed,
          updated_at = now()`,
-      [patient.id, patient.uhid, patient.firstName, patient.lastName, patient.gender, patient.dob, patient.mobile, patient.guardian.rel, patient.guardian.name, patient.address, patient.bloodGroup, patient.allergies]
+      [patient.id, patient.uhid, patient.firstName, patient.lastName, patient.gender, patient.dob, patient.mobile, patient.guardian.rel, patient.guardian.name, patient.address, patient.bloodGroup, patient.allergies, patient.whatsappConsent || false, patient.whatsappConsentAt || null, patient.whatsappConsentBy || null, patient.whatsappLanguage || "en", patient.whatsappOptedOut || false, patient.whatsappNumberConfirmed || false]
     );
     for (const weight of patient.weights || []) {
       await db.query(
@@ -180,11 +190,29 @@ async function seedPatients(db) {
   }
 }
 
+async function seedVaccines(db) {
+  for (const vaccine of seed.vaccines || []) {
+    await db.query(
+      `insert into vaccines (id, code, name, description, active)
+       values ($1, $2, $3, $4, $5)
+       on conflict (id) do update set
+         code = excluded.code,
+         name = excluded.name,
+         description = excluded.description,
+         active = excluded.active,
+         updated_at = now()`,
+      [vaccine.id, vaccine.code, vaccine.name, vaccine.description || "", vaccine.active]
+    );
+  }
+}
+
 async function seedVisitsAndInvoices(db) {
   for (const visit of seed.visits) {
     await db.query(
-      `insert into visits (id, voucher_no, patient_id, doctor_id, visit_at, status, notes, subtotal, discount, total, created_by, updated_by)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'U04', 'U04')
+      `insert into visits
+         (id, voucher_no, patient_id, doctor_id, visit_at, status, notes, subtotal, discount, total,
+          follow_up_date, follow_up_reason, created_by, updated_by)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'U04', 'U04')
        on conflict (id) do update set
          voucher_no = excluded.voucher_no,
          patient_id = excluded.patient_id,
@@ -195,8 +223,10 @@ async function seedVisitsAndInvoices(db) {
          subtotal = excluded.subtotal,
          discount = excluded.discount,
          total = excluded.total,
+         follow_up_date = excluded.follow_up_date,
+         follow_up_reason = excluded.follow_up_reason,
          updated_at = now()`,
-      [visit.id, visit.voucherNo, visit.patientId, visit.doctorId, visit.date, visit.status, visit.notes, visit.subtotal, visit.discount, visit.total]
+      [visit.id, visit.voucherNo, visit.patientId, visit.doctorId, visit.date, visit.status, visit.notes, visit.subtotal, visit.discount, visit.total, visit.followUpDate || null, visit.followUpReason || ""]
     );
     if (visit.vitals && Object.keys(visit.vitals).length) {
       await db.query(

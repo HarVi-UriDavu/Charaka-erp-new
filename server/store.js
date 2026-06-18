@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createSeedData } from "./seed.js";
+import { generateClinicPdf } from "./pdfDocuments.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
@@ -31,6 +32,25 @@ export class ClinicStore {
     const seed = createSeedData();
     data.meta = { ...seed.meta, ...(data.meta || {}) };
     data.sequences = { ...seed.sequences, ...(data.sequences || {}) };
+    data.roles ||= {};
+    for (const [role, permissions] of Object.entries(seed.roles)) {
+      data.roles[role] = [...new Set([...(data.roles[role] || []), ...permissions])];
+    }
+    for (const key of ["vaccines", "vaccinations", "whatsappOutbox", "reminderJobs", "callbackRequests"]) {
+      data[key] ||= structuredClone(seed[key]);
+    }
+    for (const patient of data.patients || []) {
+      patient.whatsappConsent ??= false;
+      patient.whatsappConsentAt ??= null;
+      patient.whatsappConsentBy ??= null;
+      patient.whatsappLanguage ||= "en";
+      patient.whatsappOptedOut ??= false;
+      patient.whatsappNumberConfirmed ??= false;
+    }
+    for (const visit of data.visits || []) {
+      visit.followUpDate ??= null;
+      visit.followUpReason ||= "";
+    }
     if (!data.meta.gstin) data.meta.gstin = seed.meta.gstin;
     if (!data.meta.drugLicenseNo20) data.meta.drugLicenseNo20 = seed.meta.drugLicenseNo20;
     if (!data.meta.drugLicenseNo21) data.meta.drugLicenseNo21 = seed.meta.drugLicenseNo21;
@@ -119,6 +139,12 @@ export class ClinicStore {
       address: input.address || "",
       bloodGroup: input.bloodGroup || "",
       allergies: input.allergies || "Nil known",
+      whatsappConsent: Boolean(input.whatsappConsent),
+      whatsappConsentAt: input.whatsappConsent ? new Date().toISOString() : null,
+      whatsappConsentBy: input.whatsappConsent ? userId : null,
+      whatsappLanguage: input.whatsappLanguage === "te" ? "te" : "en",
+      whatsappOptedOut: false,
+      whatsappNumberConfirmed: Boolean(input.whatsappNumberConfirmed),
       weights: []
     };
     this.state.patients.unshift(patient);
@@ -161,6 +187,7 @@ export class ClinicStore {
     if (visit.vitals.wt) patient.weights.push({ date: visit.date, w: visit.vitals.wt });
     this.state.invoices.unshift(this.invoiceFrom("OPD", visit, patient.id));
     this.audit(userId, "CREATE", "visit", visit.id, { voucherNo, total });
+    this.queueDocument("opd_receipt", visit.id, visit.patientId, userId);
     this.save();
     return visit;
   }
@@ -172,6 +199,8 @@ export class ClinicStore {
     visit.status = "done";
     visit.vitals = { ...visit.vitals, ...normalizeVitals(input.vitals || {}) };
     visit.notes = input.notes || "";
+    visit.followUpDate = input.followUpDate || null;
+    visit.followUpReason = input.followUpReason || "";
     visit.prescription = (input.prescription || []).filter((r) => r.name || r.drugId).map((r) => ({
       drugId: r.drugId || "",
       name: r.name || this.state.drugs.find((d) => d.id === r.drugId)?.name || "",
@@ -181,6 +210,8 @@ export class ClinicStore {
       qty: Number(r.qty) || 1
     }));
     this.audit(userId, "UPDATE", "visit", visit.id, { status: visit.status, rx: visit.prescription.length });
+    this.queueDocument("prescription", visit.id, visit.patientId, userId);
+    this.scheduleFollowUp(visit, userId);
     this.save();
     return visit;
   }
@@ -216,6 +247,7 @@ export class ClinicStore {
     this.state.pharmacySales.unshift(sale);
     this.state.invoices.unshift(this.invoiceFrom("PHARMACY", sale, sale.patientId));
     this.audit(userId, "CREATE", "pharmacy_sale", sale.id, { voucherNo: sale.voucherNo, total });
+    if (sale.patientId) this.queueDocument("pharmacy_invoice", sale.id, sale.patientId, userId);
     this.save();
     return sale;
   }
@@ -512,6 +544,217 @@ export class ClinicStore {
     this.stockMove("OPENING", "import", drug.id, batch.id, qty, "Opening stock import");
   }
 
+  updatePatientWhatsApp(patientId, input, userId = "U02") {
+    this.requireUser(userId);
+    const patient = this.state.patients.find((row) => row.id === patientId);
+    if (!patient) throw httpError(404, "Patient not found");
+    patient.whatsappConsent = Boolean(input.whatsappConsent);
+    patient.whatsappConsentAt = patient.whatsappConsent ? patient.whatsappConsentAt || new Date().toISOString() : null;
+    patient.whatsappConsentBy = patient.whatsappConsent ? userId : null;
+    patient.whatsappLanguage = input.whatsappLanguage === "te" ? "te" : "en";
+    patient.whatsappNumberConfirmed = Boolean(input.whatsappNumberConfirmed);
+    if (patient.whatsappConsent && patient.whatsappNumberConfirmed && !patient.whatsappOptedOut) {
+      for (const message of this.state.whatsappOutbox.filter((row) => row.patientId === patientId && row.status === "blocked_no_consent")) {
+        message.status = "queued";
+        message.scheduledFor = new Date().toISOString();
+        message.updatedAt = new Date().toISOString();
+      }
+    }
+    this.audit(userId, "UPDATE", "patient_whatsapp", patientId, {
+      consent: patient.whatsappConsent,
+      language: patient.whatsappLanguage,
+      confirmed: patient.whatsappNumberConfirmed
+    });
+    this.save();
+    return patient;
+  }
+
+  addVaccine(input, userId = "U04") {
+    this.requireAdmin(userId);
+    const vaccine = {
+      id: input.id || `VAC${pad(this.nextSeq("vaccine"), 3)}`,
+      code: required(input.code, "code").toUpperCase(),
+      name: required(input.name, "name"),
+      description: input.description || "",
+      active: input.active === false ? false : true
+    };
+    if (this.state.vaccines.some((row) => row.code === vaccine.code)) throw httpError(409, "Vaccine code already exists");
+    this.state.vaccines.push(vaccine);
+    this.audit(userId, "CREATE", "vaccine", vaccine.id, { code: vaccine.code });
+    this.save();
+    return vaccine;
+  }
+
+  recordVaccination(input, userId = "U01") {
+    this.requireUser(userId);
+    const patient = this.state.patients.find((row) => row.id === required(input.patientId, "patientId"));
+    if (!patient) throw httpError(404, "Patient not found");
+    const vaccine = this.state.vaccines.find((row) => row.id === required(input.vaccineId, "vaccineId") && row.active);
+    if (!vaccine) throw httpError(404, "Vaccine not found");
+    if (input.nextVaccineId && !this.state.vaccines.some((row) => row.id === input.nextVaccineId && row.active)) throw httpError(404, "Next vaccine not found");
+    const vaccination = {
+      id: `VX${pad(this.nextSeq("vaccination"), 6)}`,
+      patientId: patient.id,
+      vaccineId: vaccine.id,
+      administeredAt: input.administeredAt || todayKey(),
+      batchNo: input.batchNo || "",
+      administeredBy: userId,
+      nextVaccineId: input.nextVaccineId || null,
+      nextDueDate: input.nextDueDate || null,
+      notes: input.notes || ""
+    };
+    this.state.vaccinations.unshift(vaccination);
+    if (vaccination.nextDueDate && vaccination.nextVaccineId) {
+      for (const offsetDays of [7, 1]) this.insertReminder("vaccine", "vaccination", vaccination.id, patient.id, vaccination.nextDueDate, offsetDays);
+    }
+    this.audit(userId, "CREATE", "vaccination", vaccination.id, { patientId: patient.id, vaccineId: vaccine.id, nextDueDate: vaccination.nextDueDate });
+    this.save();
+    return vaccination;
+  }
+
+  queueDocument(documentKind, refId, patientId, userId) {
+    const patient = this.state.patients.find((row) => row.id === patientId);
+    if (!patient) return null;
+    const idempotencyKey = `document:${documentKind}:${refId}:v1`;
+    const existing = this.state.whatsappOutbox.find((row) => row.idempotencyKey === idempotencyKey);
+    if (existing) return existing;
+    const message = {
+      id: `WA${pad(this.nextSeq("whatsapp"), 6)}`,
+      patientId,
+      phone: patient.mobile,
+      language: patient.whatsappLanguage || "en",
+      kind: "document",
+      templateName: "charaka_document",
+      refType: documentKind === "pharmacy_invoice" ? "pharmacy_sale" : "visit",
+      refId,
+      documentKind,
+      idempotencyKey,
+      payload: { documentKind, refId },
+      scheduledFor: new Date().toISOString(),
+      status: localMessageStatus(patient),
+      attempts: 0,
+      externalId: null,
+      lastError: "",
+      createdBy: userId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    this.state.whatsappOutbox.unshift(message);
+    return message;
+  }
+
+  scheduleFollowUp(visit, userId) {
+    this.state.reminderJobs = this.state.reminderJobs.filter((row) => !(row.refType === "visit" && row.refId === visit.id && row.kind === "followup" && row.status === "pending"));
+    if (!visit.followUpDate) return [];
+    const reminder = this.insertReminder("followup", "visit", visit.id, visit.patientId, visit.followUpDate, 1);
+    this.audit(userId, "CREATE", "reminder_job", reminder.id, { kind: "followup", dueDate: visit.followUpDate, offsetDays: 1 });
+    return [reminder];
+  }
+
+  insertReminder(kind, refType, refId, patientId, dueDate, offsetDays) {
+    const key = `schedule:${kind}:${refId}:${offsetDays}:${dueDate}`;
+    const existing = this.state.reminderJobs.find((row) => row.idempotencyKey === key);
+    if (existing) return existing;
+    const reminder = {
+      id: `REM${pad(this.nextSeq("reminder"), 6)}`,
+      patientId,
+      kind,
+      refType,
+      refId,
+      dueDate,
+      remindAt: reminderDate(dueDate, offsetDays),
+      offsetDays,
+      status: "pending",
+      outboxId: null,
+      idempotencyKey: key,
+      createdAt: new Date().toISOString()
+    };
+    this.state.reminderJobs.push(reminder);
+    return reminder;
+  }
+
+  processDueReminders() {
+    const now = Date.now();
+    const queued = [];
+    for (const reminder of this.state.reminderJobs.filter((row) => row.status === "pending" && new Date(row.remindAt).getTime() <= now)) {
+      const patient = this.state.patients.find((row) => row.id === reminder.patientId);
+      const existing = this.state.whatsappOutbox.find((row) => row.idempotencyKey === `reminder:${reminder.kind}:${reminder.refId}:${reminder.offsetDays}`);
+      const message = existing || {
+        id: `WA${pad(this.nextSeq("whatsapp"), 6)}`,
+        patientId: patient.id,
+        phone: patient.mobile,
+        language: patient.whatsappLanguage || "en",
+        kind: reminder.kind === "followup" ? "followup_reminder" : "vaccine_reminder",
+        templateName: reminder.kind === "followup" ? "charaka_followup_reminder" : "charaka_vaccine_reminder",
+        refType: reminder.refType,
+        refId: reminder.refId,
+        documentKind: null,
+        idempotencyKey: `reminder:${reminder.kind}:${reminder.refId}:${reminder.offsetDays}`,
+        payload: { dueDate: reminder.dueDate, offsetDays: reminder.offsetDays },
+        scheduledFor: new Date().toISOString(),
+        status: localMessageStatus(patient),
+        attempts: 0,
+        externalId: null,
+        lastError: "",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      if (!existing) this.state.whatsappOutbox.unshift(message);
+      reminder.outboxId = message.id;
+      reminder.status = message.status === "queued" ? "queued" : "failed";
+      queued.push(message);
+    }
+    if (queued.length) this.save();
+    return queued;
+  }
+
+  resendWhatsApp(id, userId = "U04") {
+    this.requireUser(userId);
+    const source = this.state.whatsappOutbox.find((row) => row.id === id);
+    if (!source) throw httpError(404, "WhatsApp message not found");
+    const patient = this.state.patients.find((row) => row.id === source.patientId);
+    const seq = this.nextSeq("whatsapp");
+    const message = {
+      ...structuredClone(source),
+      id: `WA${pad(seq, 6)}`,
+      idempotencyKey: `${source.idempotencyKey}:resend:${seq}`,
+      status: localMessageStatus(patient),
+      attempts: 0,
+      externalId: null,
+      lastError: "",
+      payload: { ...(source.payload || {}), resendOf: source.id },
+      scheduledFor: new Date().toISOString(),
+      createdBy: userId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    this.state.whatsappOutbox.unshift(message);
+    this.save();
+    return message;
+  }
+
+  closeCallback(id, userId = "U02") {
+    this.requireUser(userId);
+    const callback = this.state.callbackRequests.find((row) => row.id === id);
+    if (!callback) throw httpError(404, "Callback request not found");
+    callback.status = "closed";
+    callback.handledBy = userId;
+    callback.handledAt = new Date().toISOString();
+    this.audit(userId, "UPDATE", "callback_request", id, { status: "closed" });
+    this.save();
+    return callback;
+  }
+
+  async whatsappDocument(id) {
+    const message = this.state.whatsappOutbox.find((row) => row.id === id);
+    if (!message?.documentKind) throw httpError(404, "WhatsApp document not found");
+    const record = message.documentKind === "pharmacy_invoice"
+      ? this.state.pharmacySales.find((row) => row.id === message.refId)
+      : this.state.visits.find((row) => row.id === message.refId);
+    const patient = this.state.patients.find((row) => row.id === message.patientId);
+    return generateClinicPdf({ kind: message.documentKind, record, patient, meta: this.state.meta, drugs: this.state.drugs });
+  }
+
   backup() {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const file = path.join(backupDir, `clinic-${stamp}.json`);
@@ -556,6 +799,18 @@ function validateMobile(value) {
   const mobile = String(value || "").replace(/\D/g, "");
   if (!/^[6-9]\d{9}$/.test(mobile)) throw httpError(400, "mobile must be a 10-digit Indian number");
   return mobile;
+}
+
+function localMessageStatus(patient) {
+  if (patient?.whatsappOptedOut) return "opted_out";
+  if (!patient?.whatsappConsent || !patient?.whatsappNumberConfirmed) return "blocked_no_consent";
+  return "queued";
+}
+
+function reminderDate(dueDate, offsetDays) {
+  const date = new Date(`${dueDate}T09:00:00+05:30`);
+  date.setUTCDate(date.getUTCDate() - Number(offsetDays));
+  return date.toISOString();
 }
 
 export function parseCsv(text) {

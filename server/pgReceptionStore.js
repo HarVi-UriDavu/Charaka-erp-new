@@ -27,13 +27,21 @@ export class PgReceptionStore {
       address: input.address || "",
       bloodGroup: input.bloodGroup || "",
       allergies: input.allergies || "Nil known",
+      whatsappConsent: Boolean(input.whatsappConsent),
+      whatsappLanguage: input.whatsappLanguage === "te" ? "te" : "en",
+      whatsappNumberConfirmed: Boolean(input.whatsappNumberConfirmed),
+      whatsappOptedOut: false,
       weights: []
     };
     await this.db.query(
-      `insert into patients (id, uhid, first_name, last_name, gender, dob, mobile, guardian_rel, guardian_name, address, blood_group, allergies)
-       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      `insert into patients
+         (id, uhid, first_name, last_name, gender, dob, mobile, guardian_rel, guardian_name,
+          address, blood_group, allergies, whatsapp_consent, whatsapp_consent_at,
+          whatsapp_consent_by, whatsapp_language, whatsapp_number_confirmed)
+       values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+               case when $13 then now() else null end, case when $13 then $14 else null end, $15, $16)
        returning *`,
-      [patient.id, patient.uhid, patient.firstName, patient.lastName, patient.gender, patient.dob, patient.mobile, patient.guardian.rel, patient.guardian.name, patient.address, patient.bloodGroup, patient.allergies]
+      [patient.id, patient.uhid, patient.firstName, patient.lastName, patient.gender, patient.dob, patient.mobile, patient.guardian.rel, patient.guardian.name, patient.address, patient.bloodGroup, patient.allergies, patient.whatsappConsent, userId, patient.whatsappLanguage, patient.whatsappNumberConfirmed]
     );
     await this.system.audit(userId, "CREATE", "patient", patient.id, { uhid: patient.uhid });
     return patient;

@@ -1,0 +1,28 @@
+name = "charaka-whatsapp-relay"
+main = "src/index.js"
+compatibility_date = "2026-06-01"
+
+[vars]
+META_API_VERSION = "v23.0"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "charaka-whatsapp-relay"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+[[r2_buckets]]
+binding = "DOCUMENTS"
+bucket_name = "charaka-whatsapp-documents"
+
+[[queues.producers]]
+binding = "OUTBOUND_QUEUE"
+queue = "charaka-whatsapp-outbound"
+
+[[queues.consumers]]
+queue = "charaka-whatsapp-outbound"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 5
+
+[triggers]
+crons = ["*/5 * * * *", "15 2 * * *"]

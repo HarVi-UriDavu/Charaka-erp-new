@@ -3,11 +3,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { withTransaction } from "./db.js";
 import { PgClinicalStore } from "./pgClinicalStore.js";
+import { PgMessagingStore } from "./pgMessagingStore.js";
 import { PgPharmacyStore } from "./pgPharmacyStore.js";
 import { PgReceptionStore } from "./pgReceptionStore.js";
 import { PgReportsStore } from "./pgReportsStore.js";
 import { PgSystemStore, hashPin } from "./pgSystemStore.js";
 import { httpError, parseCsv } from "./store.js";
+import { generateClinicPdf } from "./pdfDocuments.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "..");
@@ -24,6 +26,7 @@ export class PgAppStore {
     this.clinical = new PgClinicalStore(db, this.system);
     this.pharmacy = new PgPharmacyStore(db, this.system);
     this.reports = new PgReportsStore(db, this.system);
+    this.messaging = new PgMessagingStore(db, this.system);
   }
 
   login(input) {
@@ -34,16 +37,23 @@ export class PgAppStore {
     return this.reception.addPatient(input, userId);
   }
 
-  createVisit(input, userId) {
-    return this.reception.createVisit(input, userId);
+  async createVisit(input, userId) {
+    const visit = await this.reception.createVisit(input, userId);
+    await this.queueSafely(() => this.messaging.queueDocument("opd_receipt", visit.id, visit.patientId, userId));
+    return visit;
   }
 
-  updateVisitClinical(id, input, userId) {
-    return this.clinical.updateVisitClinical(id, input, userId);
+  async updateVisitClinical(id, input, userId) {
+    const visit = await this.clinical.updateVisitClinical(id, input, userId);
+    await this.queueSafely(() => this.messaging.queueDocument("prescription", visit.id, visit.patientId, userId));
+    await this.queueSafely(() => this.messaging.scheduleFollowUp(visit.id, visit.patientId, visit.followUpDate, visit.followUpReason, userId));
+    return visit;
   }
 
-  createPharmacySale(input, userId) {
-    return this.pharmacy.createPharmacySale(input, userId);
+  async createPharmacySale(input, userId) {
+    const sale = await this.pharmacy.createPharmacySale(input, userId);
+    await this.queueSafely(() => this.messaging.queueDocument("pharmacy_invoice", sale.id, sale.patientId, userId));
+    return sale;
   }
 
   createPurchase(input, userId) {
@@ -67,7 +77,7 @@ export class PgAppStore {
   }
 
   async snapshot() {
-    const [system, patients, doctors, services, suppliers, drugs, drugBatches, visits, invoices, pharmacySales, purchases, returns, stockMovements, importJobs, auditLogs] = await Promise.all([
+    const [system, patients, doctors, services, suppliers, drugs, drugBatches, visits, invoices, pharmacySales, purchases, returns, stockMovements, importJobs, auditLogs, vaccines, vaccinations, whatsappOutbox, callbackRequests] = await Promise.all([
       this.system.snapshotSystem(),
       this.patients(),
       this.doctors(),
@@ -82,7 +92,11 @@ export class PgAppStore {
       this.returns(),
       this.stockMovements(),
       this.importJobs(),
-      this.reports.auditLogs(50)
+      this.reports.auditLogs(50),
+      this.vaccines(),
+      this.vaccinations(),
+      this.messaging.listOutbox(100),
+      this.messaging.callbacks(100)
     ]);
     return {
       ...system,
@@ -99,7 +113,11 @@ export class PgAppStore {
       returns,
       stockMovements,
       importJobs,
-      auditLogs
+      auditLogs,
+      vaccines,
+      vaccinations,
+      whatsappOutbox,
+      callbackRequests
     };
   }
 
@@ -107,7 +125,10 @@ export class PgAppStore {
     const [patients, weights] = await Promise.all([
       this.db.query(
         `select id, uhid, first_name as "firstName", last_name as "lastName", gender, dob, mobile,
-                guardian_rel as "guardianRel", guardian_name as "guardianName", address, blood_group as "bloodGroup", allergies
+                guardian_rel as "guardianRel", guardian_name as "guardianName", address, blood_group as "bloodGroup", allergies,
+                whatsapp_consent as "whatsappConsent", whatsapp_consent_at as "whatsappConsentAt",
+                whatsapp_language as "whatsappLanguage", whatsapp_opted_out as "whatsappOptedOut",
+                whatsapp_number_confirmed as "whatsappNumberConfirmed"
          from patients
          where active = true
          order by created_at desc, id desc`
@@ -131,6 +152,11 @@ export class PgAppStore {
       address: row.address,
       bloodGroup: row.bloodGroup,
       allergies: row.allergies,
+      whatsappConsent: Boolean(row.whatsappConsent),
+      whatsappConsentAt: row.whatsappConsentAt || null,
+      whatsappLanguage: row.whatsappLanguage || "en",
+      whatsappOptedOut: Boolean(row.whatsappOptedOut),
+      whatsappNumberConfirmed: Boolean(row.whatsappNumberConfirmed),
       weights: (byPatient[row.id] || []).map((w) => ({ date: w.date, w: Number(w.w) }))
     }));
   }
@@ -185,7 +211,8 @@ export class PgAppStore {
     const [visits, vitals, items, prescriptions] = await Promise.all([
       this.db.query(
         `select id, voucher_no as "voucherNo", patient_id as "patientId", doctor_id as "doctorId",
-                visit_at as date, status, notes, subtotal, discount, total
+                visit_at as date, status, notes, subtotal, discount, total,
+                follow_up_date as "followUpDate", follow_up_reason as "followUpReason"
          from visits
          order by visit_at desc`
       ),
@@ -338,6 +365,148 @@ export class PgAppStore {
        limit 50`
     );
     return result.rows;
+  }
+
+  async vaccines() {
+    const result = await this.db.query(
+      `select id, code, name, description, active
+       from vaccines
+       order by name, id`
+    );
+    return result.rows;
+  }
+
+  async vaccinations() {
+    const result = await this.db.query(
+      `select id, patient_id as "patientId", vaccine_id as "vaccineId", administered_at as "administeredAt",
+              batch_no as "batchNo", administered_by as "administeredBy",
+              next_vaccine_id as "nextVaccineId", next_due_date as "nextDueDate", notes
+       from vaccinations
+       order by administered_at desc, created_at desc`
+    );
+    return result.rows;
+  }
+
+  async addVaccine(input, userId = "U04") {
+    return runInTransaction(this.db, async (db) => {
+      const system = new PgSystemStore(db);
+      await system.requireAdmin(userId);
+      const vaccine = {
+        id: input.id || `VAC${pad(await system.nextSeq("vaccine"), 3)}`,
+        code: required(input.code, "code").toUpperCase(),
+        name: required(input.name, "name"),
+        description: input.description || "",
+        active: input.active === false ? false : true
+      };
+      await db.query(
+        `insert into vaccines (id, code, name, description, active)
+         values ($1, $2, $3, $4, $5)`,
+        [vaccine.id, vaccine.code, vaccine.name, vaccine.description, vaccine.active]
+      );
+      await system.audit(userId, "CREATE", "vaccine", vaccine.id, { code: vaccine.code });
+      return vaccine;
+    });
+  }
+
+  async recordVaccination(input, userId = "U01") {
+    const vaccination = await runInTransaction(this.db, async (db) => {
+      const system = new PgSystemStore(db);
+      await system.requireUser(userId);
+      const patientId = required(input.patientId, "patientId");
+      const vaccineId = required(input.vaccineId, "vaccineId");
+      const patient = await db.query(`select id from patients where id = $1 and active = true`, [patientId]);
+      if (!patient.rows[0]) throw httpError(404, "Patient not found");
+      const vaccine = await db.query(`select id from vaccines where id = $1 and active = true`, [vaccineId]);
+      if (!vaccine.rows[0]) throw httpError(404, "Vaccine not found");
+      if (input.nextVaccineId) {
+        const next = await db.query(`select id from vaccines where id = $1 and active = true`, [input.nextVaccineId]);
+        if (!next.rows[0]) throw httpError(404, "Next vaccine not found");
+      }
+      const id = `VX${pad(await system.nextSeq("vaccination"), 6)}`;
+      const record = {
+        id,
+        patientId,
+        vaccineId,
+        administeredAt: input.administeredAt || new Date().toISOString().slice(0, 10),
+        batchNo: input.batchNo || "",
+        administeredBy: userId,
+        nextVaccineId: input.nextVaccineId || null,
+        nextDueDate: input.nextDueDate || null,
+        notes: input.notes || ""
+      };
+      await db.query(
+        `insert into vaccinations
+           (id, patient_id, vaccine_id, administered_at, batch_no, administered_by,
+            next_vaccine_id, next_due_date, notes)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [record.id, record.patientId, record.vaccineId, record.administeredAt, record.batchNo, record.administeredBy, record.nextVaccineId, record.nextDueDate, record.notes]
+      );
+      await system.audit(userId, "CREATE", "vaccination", record.id, { patientId, vaccineId, nextDueDate: record.nextDueDate });
+      return record;
+    });
+    await this.queueSafely(() => this.messaging.scheduleVaccination(vaccination.id, vaccination.patientId, vaccination.nextDueDate, vaccination.nextVaccineId, userId));
+    return vaccination;
+  }
+
+  updatePatientWhatsApp(patientId, input, userId) {
+    return this.messaging.updatePatientConsent(patientId, input, userId);
+  }
+
+  resendWhatsApp(id, userId) {
+    return this.messaging.resend(id, userId);
+  }
+
+  closeCallback(id, userId) {
+    return this.messaging.closeCallback(id, userId);
+  }
+
+  processDueReminders() {
+    return this.messaging.processDueReminders();
+  }
+
+  pendingWhatsApp() {
+    return this.messaging.pendingOutbound();
+  }
+
+  markWhatsAppSubmitted(id, externalId) {
+    return this.messaging.markRelaySubmitted(id, externalId);
+  }
+
+  markWhatsAppFailure(id, message) {
+    return this.messaging.markRelayFailure(id, message);
+  }
+
+  applyRelayEvent(event) {
+    return this.messaging.applyRelayEvent(event);
+  }
+
+  relayCursor() {
+    return this.messaging.relayCursor();
+  }
+
+  setRelayCursor(cursor) {
+    return this.messaging.setRelayCursor(cursor);
+  }
+
+  async whatsappDocument(id) {
+    const result = await this.db.query(`select * from whatsapp_outbox where id = $1`, [id]);
+    const message = result.rows[0];
+    if (!message || !message.document_kind) throw httpError(404, "WhatsApp document not found");
+    const snapshot = await this.snapshot();
+    const record = message.document_kind === "pharmacy_invoice"
+      ? snapshot.pharmacySales.find((row) => row.id === message.ref_id)
+      : snapshot.visits.find((row) => row.id === message.ref_id);
+    const patient = snapshot.patients.find((row) => row.id === message.patient_id);
+    return generateClinicPdf({ kind: message.document_kind, record, patient, meta: snapshot.meta, drugs: snapshot.drugs });
+  }
+
+  async queueSafely(work) {
+    try {
+      return await work();
+    } catch (error) {
+      console.error("WhatsApp queue error:", error.message);
+      return null;
+    }
   }
 
   async addService(input, userId = "U04") {

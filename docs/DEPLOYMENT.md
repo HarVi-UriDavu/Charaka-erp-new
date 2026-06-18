@@ -36,20 +36,23 @@ docker compose up --build
 
 This exposes the app on port `4173` and persists `data/` plus `backups/` on the host.
 
-## PostgreSQL Graduation
+## PostgreSQL
 
-The current runnable MVP uses JSON persistence so it works without installing dependencies. The target production schema is in `database/schema.sql`.
+Docker Compose runs the production app against PostgreSQL. After pulling schema changes:
 
-When moving to PostgreSQL:
+```bash
+docker compose build erp
+docker compose run --rm erp npm run db:migrate
+docker compose up -d
+```
 
-1. Start the optional Postgres service:
+The app uses JSON persistence only when started without `DATABASE_URL`.
 
-   ```bash
-   docker compose --profile postgres-target up -d postgres
-   ```
+## WhatsApp
 
-2. Replace the JSON store with a database-backed repository using the tables in `database/schema.sql`.
-3. Keep the existing API contracts unchanged so the UI does not need to be rewritten.
+WhatsApp uses an outbound-only connection from the clinic server to a Cloudflare relay. Do not expose port `4173` to the internet.
+
+Follow `docs/WHATSAPP_SETUP.md` after the normal LAN deployment is working.
 
 ## Clinic Hardening Checklist
 

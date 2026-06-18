@@ -66,3 +66,38 @@ test("Postgres app store imports CSV and records import job", async () => {
   assert.equal(state.suppliers.at(-1).name, "New Supplier");
   assert.equal(state.importJobs[0].entity, "suppliers");
 });
+
+test("Postgres app store queues OPD document after visit commit", async () => {
+  const state = appState();
+  state.sequences = { audit: 1, opd: 25, invoice: 200, whatsapp: 0 };
+  const store = new PgAppStore(fakeDb(state));
+
+  const visit = await store.createVisit({
+    patientId: "P001",
+    doctorId: "D01",
+    items: [{ serviceId: "S01", qty: 1 }],
+    payment: { cash: 400, upi: 0 }
+  }, "U02");
+
+  assert.equal(visit.id, "V10026");
+  assert.equal(state.whatsappOutbox[0].document_kind, "opd_receipt");
+});
+
+test("Postgres app store keeps visit success when WhatsApp queue fails", async () => {
+  const state = appState();
+  state.sequences = { audit: 1, opd: 25, invoice: 200 };
+  const store = new PgAppStore(fakeDb(state));
+  store.messaging.queueDocument = async () => {
+    throw new Error("Relay unavailable");
+  };
+
+  const visit = await store.createVisit({
+    patientId: "P001",
+    doctorId: "D01",
+    items: [{ serviceId: "S01", qty: 1 }],
+    payment: { cash: 400, upi: 0 }
+  }, "U02");
+
+  assert.equal(visit.id, "V10026");
+  assert.equal(state.visits[0].id, "V10026");
+});

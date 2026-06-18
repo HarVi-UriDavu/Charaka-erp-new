@@ -40,13 +40,18 @@ export function createSeedData() {
       invoice: 200,
       audit: 1,
       stock: 1,
-      importJob: 1
+      importJob: 1,
+      whatsapp: 0,
+      reminder: 0,
+      vaccine: 4,
+      vaccination: 0,
+      callback: 0
     },
     roles: {
       doctor: ["dashboard", "clinical", "reception", "reports"],
-      reception: ["dashboard", "reception", "billing"],
-      pharmacist: ["dashboard", "pharmacy", "billing"],
-      admin: ["dashboard", "reception", "clinical", "pharmacy", "billing", "reports", "masters", "settings"]
+      reception: ["dashboard", "reception", "billing", "messages"],
+      pharmacist: ["dashboard", "pharmacy", "billing", "messages"],
+      admin: ["dashboard", "reception", "clinical", "pharmacy", "billing", "messages", "reports", "masters", "settings"]
     },
     users: [
       { id: "U01", name: "Dr. D. Rama Kotaiah", role: "doctor", pin: "1111", active: true },
@@ -85,6 +90,12 @@ export function createSeedData() {
         address: "Kothapet, Guntur",
         bloodGroup: "O+",
         allergies: "Nil known",
+        whatsappConsent: true,
+        whatsappConsentAt: iso(new Date()),
+        whatsappConsentBy: "U02",
+        whatsappLanguage: "en",
+        whatsappOptedOut: false,
+        whatsappNumberConfirmed: true,
         weights: [{ date: iso(at(9, 0, -18)), w: 17.8 }, { date: iso(at(9, 0, -2)), w: 18.1 }]
       },
       {
@@ -99,6 +110,12 @@ export function createSeedData() {
         address: "Lakshmipuram, Guntur",
         bloodGroup: "B+",
         allergies: "Penicillin",
+        whatsappConsent: false,
+        whatsappConsentAt: null,
+        whatsappConsentBy: null,
+        whatsappLanguage: "te",
+        whatsappOptedOut: false,
+        whatsappNumberConfirmed: false,
         weights: [{ date: iso(at(10, 0, -7)), w: 12.3 }]
       },
       {
@@ -113,6 +130,12 @@ export function createSeedData() {
         address: "Brodipet, Guntur",
         bloodGroup: "A+",
         allergies: "Nil known",
+        whatsappConsent: false,
+        whatsappConsentAt: null,
+        whatsappConsentBy: null,
+        whatsappLanguage: "en",
+        whatsappOptedOut: false,
+        whatsappNumberConfirmed: false,
         weights: [{ date: iso(at(9, 15, -4)), w: 22.5 }]
       }
     ],
@@ -147,6 +170,8 @@ export function createSeedData() {
         total: 400,
         paid: { mode: "Cash", cash: 400, upi: 0 },
         notes: "Fever for two days. Hydration advised.",
+        followUpDate: null,
+        followUpReason: "",
         prescription: [{ drugId: "DR01", name: "Paracetamol Syrup", dose: "5 ml", frequency: "TID", days: 3, qty: 1 }]
       },
       {
@@ -163,6 +188,8 @@ export function createSeedData() {
         total: 200,
         paid: { mode: "UPI", cash: 0, upi: 200 },
         notes: "",
+        followUpDate: null,
+        followUpReason: "",
         prescription: []
       }
     ],
@@ -182,6 +209,16 @@ export function createSeedData() {
       { id: "SM006", date: iso(addDays(-1)), kind: "OPENING", refId: "seed", drugId: "DR06", batchId: "B006", qty: 20, note: "Opening stock" }
     ],
     importJobs: [],
-    auditLogs: []
+    auditLogs: [],
+    vaccines: [
+      { id: "VAC001", code: "BCG", name: "BCG", description: "", active: true },
+      { id: "VAC002", code: "OPV", name: "Oral Polio Vaccine", description: "", active: true },
+      { id: "VAC003", code: "PENTA", name: "Pentavalent Vaccine", description: "", active: true },
+      { id: "VAC004", code: "MMR", name: "MMR", description: "", active: true }
+    ],
+    vaccinations: [],
+    whatsappOutbox: [],
+    reminderJobs: [],
+    callbackRequests: []
   };
 }

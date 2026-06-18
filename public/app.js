@@ -17,6 +17,7 @@ const modules = [
   ["clinical", "Clinical", "C"],
   ["pharmacy", "Pharmacy", "P"],
   ["billing", "Billing", "B"],
+  ["messages", "Messages", "W"],
   ["reports", "Reports", "T"],
   ["masters", "Masters", "M"],
   ["settings", "Settings", "S"]
@@ -136,6 +137,7 @@ function bindRoute() {
     clinical: bindClinical,
     pharmacy: bindPharmacy,
     billing: bindBilling,
+    messages: bindMessages,
     reports: bindReports,
     masters: bindMasters,
     settings: bindSettings
@@ -150,6 +152,7 @@ function routeHtml() {
     clinical: clinicalHtml,
     pharmacy: pharmacyHtml,
     billing: billingHtml,
+    messages: messagesHtml,
     reports: reportsHtml,
     masters: mastersHtml,
     settings: settingsHtml
@@ -207,6 +210,8 @@ function bindReception() {
   byId("newPatientBtn")?.addEventListener("click", () => openPatientDialog());
   document.querySelectorAll("[data-patient]").forEach((b) => b.addEventListener("click", () => { state.selectedPatientId = b.dataset.patient; render(); }));
   byId("startVisitBtn")?.addEventListener("click", () => openVisitDialog(state.selectedPatientId));
+  byId("whatsappConsentBtn")?.addEventListener("click", () => openWhatsAppConsentDialog(state.selectedPatientId));
+  byId("recordVaccineBtn")?.addEventListener("click", () => openVaccinationDialog(state.selectedPatientId));
   document.querySelectorAll("[data-print-visit]").forEach((b) => b.addEventListener("click", () => openReceipt("visit", b.dataset.printVisit)));
 }
 
@@ -214,12 +219,16 @@ function patientDetailHtml(p, visits) {
   return `
     <div class="toolbar" style="justify-content:space-between">
       <div><h2>${escapeHtml(p.firstName)} ${escapeHtml(p.lastName)} <span class="badge">${age(p.dob)}</span></h2><p class="hint"><span class="mono">${p.uhid}</span> - ${p.gender === "M" ? "Boy" : "Girl"} - ${escapeHtml(p.guardian.rel)} ${escapeHtml(p.guardian.name)} - ${p.mobile}</p></div>
-      <button class="btn" id="startVisitBtn">Start visit</button>
+      <div class="toolbar"><button class="btn secondary" id="whatsappConsentBtn">WhatsApp</button><button class="btn secondary" id="recordVaccineBtn">Record vaccine</button><button class="btn" id="startVisitBtn">Start visit</button></div>
     </div>
     <div class="grid cols-3" style="margin-top:14px">
       ${stat("Allergies", p.allergies || "Nil known", "clinical flag")}
       ${stat("Latest weight", p.weights?.length ? `${p.weights.at(-1).w} kg` : "-", "growth tracking")}
       ${stat("Visits", visits.length, "lifetime")}
+    </div>
+    <div class="toolbar" style="margin-top:12px">
+      <span class="badge ${p.whatsappConsent && p.whatsappNumberConfirmed && !p.whatsappOptedOut ? "green" : "amber"}">WhatsApp ${p.whatsappOptedOut ? "opted out" : p.whatsappConsent && p.whatsappNumberConfirmed ? "enabled" : "not enabled"}</span>
+      <span class="hint">Language: ${p.whatsappLanguage === "te" ? "Telugu" : "English"}</span>
     </div>
     <div class="card" style="margin-top:14px"><div class="card-head"><h3>Visit history</h3></div>${visitTable(visits)}</div>`;
 }
@@ -247,6 +256,8 @@ function bindClinical() {
     const payload = {
       status: "done",
       notes: byId("clinicalNotes").value,
+      followUpDate: byId("followUpDate").value,
+      followUpReason: byId("followUpReason").value,
       vitals: formValues("clinicalVitals"),
       prescription: [...document.querySelectorAll("[data-rx-row]")].map((row) => ({
         drugId: row.querySelector("[name=drugId]").value,
@@ -318,6 +329,30 @@ function bindBilling() {
   byId("billingDate")?.addEventListener("change", (e) => { saveValue("billingDate", e.target.value); render(); });
 }
 
+function messagesHtml() {
+  const outbox = state.data.whatsappOutbox || [];
+  const callbacks = (state.data.callbackRequests || []).filter((row) => row.status !== "closed");
+  const queued = outbox.filter((row) => row.status === "queued").length;
+  const failed = outbox.filter((row) => row.status === "failed").length;
+  const blocked = outbox.filter((row) => ["blocked_no_consent", "opted_out"].includes(row.status)).length;
+  return `
+    ${head("WhatsApp", "Automatic documents, reminders, delivery status, and reception callbacks")}
+    <div class="page-body grid">
+      <div class="grid cols-4">${stat("Queued", queued, "waiting for relay")}${stat("Failed", failed, "can be retried")}${stat("Blocked", blocked, "consent or opt-out")}${stat("Callbacks", callbacks.length, "open requests")}</div>
+      <section class="card"><div class="card-head"><h2>Message outbox</h2></div>${whatsappTable(outbox)}</section>
+      <section class="card"><div class="card-head"><h2>Reception callbacks</h2></div>${callbackTable(callbacks)}</section>
+    </div>`;
+}
+
+function bindMessages() {
+  document.querySelectorAll("[data-wa-resend]").forEach((button) => button.addEventListener("click", async () => {
+    await mutate(`/api/whatsapp/${button.dataset.waResend}/resend`, { method: "POST", body: "{}" }, "WhatsApp message queued again");
+  }));
+  document.querySelectorAll("[data-callback-close]").forEach((button) => button.addEventListener("click", async () => {
+    await mutate(`/api/callbacks/${button.dataset.callbackClose}/close`, { method: "PATCH", body: "{}" }, "Callback closed");
+  }));
+}
+
 function reportsHtml() {
   const book = state.data.daybook;
   const stockValue = sum(state.data.stockRows, "value");
@@ -330,6 +365,14 @@ function reportsHtml() {
     </div>`;
 }
 
+function whatsappTable(rows) {
+  return rows.length ? `<table><thead><tr><th>Created</th><th>Patient</th><th>Type</th><th>Language</th><th>Status</th><th>Error</th><th></th></tr></thead><tbody>${rows.map((row) => `<tr><td>${fmtDateTime(row.createdAt)}</td><td>${patientName(row.patientId) || row.phone}</td><td>${title(row.documentKind || row.kind)}</td><td>${row.language === "te" ? "Telugu" : "English"}</td><td><span class="badge ${["delivered", "read", "sent"].includes(row.status) ? "green" : row.status === "failed" ? "rose" : "amber"}">${title(row.status)}</span></td><td class="small">${escapeHtml(row.lastError || "")}</td><td class="right"><div class="toolbar">${row.documentKind ? `<a class="btn secondary" href="/api/whatsapp/${row.id}/document.pdf" target="_blank">PDF</a>` : ""}<button class="btn secondary" data-wa-resend="${row.id}">Resend</button></div></td></tr>`).join("")}</tbody></table>` : empty("No WhatsApp messages yet");
+}
+
+function callbackTable(rows) {
+  return rows.length ? `<table><thead><tr><th>Requested</th><th>Patient</th><th>Phone</th><th>Notes</th><th></th></tr></thead><tbody>${rows.map((row) => `<tr><td>${fmtDateTime(row.requestedAt)}</td><td>${patientName(row.patientId) || "Unknown number"}</td><td class="mono">${escapeHtml(row.phone)}</td><td>${escapeHtml(row.notes || "")}</td><td class="right"><button class="btn" data-callback-close="${row.id}">Mark contacted</button></td></tr>`).join("")}</tbody></table>` : empty("No open callback requests");
+}
+
 function bindReports() {}
 
 function mastersHtml() {
@@ -340,6 +383,7 @@ function mastersHtml() {
     services: simpleTable(data.services, ["code", "name", "category", "rate", "gst"]),
     drugs: simpleTable(data.drugs, ["name", "form", "pack", "hsn", "mrp", "gst", "reorderLevel"]),
     suppliers: simpleTable(data.suppliers, ["name", "gstin", "phone", "city"]),
+    vaccines: simpleTable(data.vaccines || [], ["code", "name", "description", "active"]),
     users: simpleTable(data.users, ["name", "role", "active"]),
     stock: stockTable(data.stockRows)
   };
@@ -348,6 +392,7 @@ function mastersHtml() {
     services: "Add service",
     drugs: "Add drug",
     suppliers: "Add supplier",
+    vaccines: "Add vaccine",
     users: "Add account",
     stock: "Add opening stock"
   };
@@ -397,6 +442,12 @@ function openMasterDialog(tab) {
       endpoint: "/api/admin/suppliers",
       success: "Supplier added",
       body: `<form id="masterForm" class="grid cols-2">${field("name", "Supplier name", "text", true)}${field("gstin", "GSTIN", "text")}${field("phone", "Phone", "tel")}${field("city", "City", "text", false, "Guntur")}</form>`
+    },
+    vaccines: {
+      title: "Add vaccine",
+      endpoint: "/api/admin/vaccines",
+      success: "Vaccine added",
+      body: `<form id="masterForm" class="grid cols-2">${field("code", "Code", "text", true)}${field("name", "Vaccine name", "text", true)}<div class="field" style="grid-column:1/-1"><label>Description</label><textarea name="description"></textarea></div></form>`
     },
     users: {
       title: "Add account",
@@ -470,11 +521,48 @@ function openPatientDialog() {
       ${field("bloodGroup", "Blood group")}
       <div class="field" style="grid-column:1/-1"><label>Address</label><textarea name="address"></textarea></div>
       <div class="field" style="grid-column:1/-1"><label>Allergies</label><input name="allergies" placeholder="Nil known"></div>
+      <div class="field"><label>WhatsApp language</label><select name="whatsappLanguage"><option value="en">English</option><option value="te">Telugu</option></select></div>
+      <div class="field"><label class="check"><input name="whatsappNumberConfirmed" type="checkbox"> Mobile number confirmed</label></div>
+      <div class="field" style="grid-column:1/-1"><label class="check"><input name="whatsappConsent" type="checkbox"> Guardian consents to receiving bills, prescriptions, and reminders on WhatsApp</label></div>
     </form>`, `<button class="btn secondary" data-close>Cancel</button><button class="btn" id="savePatient">Register</button>`);
   byId("savePatient").addEventListener("click", async () => {
     const payload = formValues("patientForm");
     const p = await mutate("/api/patients", { method: "POST", body: JSON.stringify(payload) }, "Patient registered");
     state.selectedPatientId = p.id;
+    closeDialog();
+  });
+}
+
+function openWhatsAppConsentDialog(patientId) {
+  const patient = state.data.patients.find((row) => row.id === patientId);
+  openDialog(`WhatsApp - ${patient.firstName} ${patient.lastName}`, `
+    <form id="whatsappConsentForm" class="grid">
+      <div class="field"><label>WhatsApp language</label><select name="whatsappLanguage"><option value="en" ${patient.whatsappLanguage !== "te" ? "selected" : ""}>English</option><option value="te" ${patient.whatsappLanguage === "te" ? "selected" : ""}>Telugu</option></select></div>
+      <label class="check"><input name="whatsappNumberConfirmed" type="checkbox" ${patient.whatsappNumberConfirmed ? "checked" : ""}> Confirm ${escapeHtml(patient.mobile)} belongs to the guardian</label>
+      <label class="check"><input name="whatsappConsent" type="checkbox" ${patient.whatsappConsent ? "checked" : ""}> Guardian consents to bills, prescriptions, and reminders on WhatsApp</label>
+      ${patient.whatsappOptedOut ? `<p class="hint"><span class="badge rose">Opted out by WhatsApp</span> The guardian must send START from WhatsApp before automatic messages resume.</p>` : ""}
+      <p class="hint">Phone-number matching is the selected identity check. Confirm the number carefully before enabling document delivery.</p>
+    </form>`, `<button class="btn secondary" data-close>Cancel</button><button class="btn" id="saveWhatsappConsent">Save</button>`);
+  byId("saveWhatsappConsent").addEventListener("click", async () => {
+    await mutate(`/api/patients/${patientId}/whatsapp`, { method: "PATCH", body: JSON.stringify(formValues("whatsappConsentForm")) }, "WhatsApp preferences saved");
+    closeDialog();
+  });
+}
+
+function openVaccinationDialog(patientId) {
+  const vaccines = (state.data.vaccines || []).filter((row) => row.active);
+  if (!vaccines.length) return showToast("No vaccines configured", "Admin must add vaccines in Masters first.");
+  openDialog("Record vaccination", `
+    <form id="vaccinationForm" class="grid cols-2">
+      <div class="field"><label>Vaccine given *</label><select name="vaccineId">${vaccines.map((row) => `<option value="${row.id}">${escapeHtml(row.name)}</option>`).join("")}</select></div>
+      ${field("administeredAt", "Date given", "date", true, new Date().toISOString().slice(0, 10))}
+      ${field("batchNo", "Batch number")}
+      <div class="field"><label>Next vaccine</label><select name="nextVaccineId"><option value="">None</option>${vaccines.map((row) => `<option value="${row.id}">${escapeHtml(row.name)}</option>`).join("")}</select></div>
+      ${field("nextDueDate", "Next due date", "date")}
+      <div class="field" style="grid-column:1/-1"><label>Notes</label><textarea name="notes"></textarea></div>
+    </form>`, `<button class="btn secondary" data-close>Cancel</button><button class="btn" id="saveVaccination">Save vaccination</button>`);
+  byId("saveVaccination").addEventListener("click", async () => {
+    await mutate("/api/vaccinations", { method: "POST", body: JSON.stringify({ patientId, ...formValues("vaccinationForm") }) }, "Vaccination recorded");
     closeDialog();
   });
 }
@@ -714,7 +802,7 @@ function patientListItem(p, active) { return `<button class="list-item ${active 
 function patientText(p) { return `${p.uhid} ${p.firstName} ${p.lastName} ${p.mobile} ${p.guardian.name}`.toLowerCase(); }
 function visitQueueItem(v, active) { const p = state.data.patients.find((x) => x.id === v.patientId); return `<button class="list-item ${active ? "active" : ""}" data-visit="${v.id}"><strong>${patientName(v.patientId)}</strong> <span class="badge ${v.status === "done" ? "green" : v.status === "waiting" ? "amber" : "teal"}">${v.status}</span><div class="hint mono">${v.voucherNo}</div><div class="hint">${p ? age(p.dob) : ""} - ${fmtTime(v.date)} - ${rupee(v.total)}</div></button>`; }
 function queueTable(rows) { return rows.length ? `<table><thead><tr><th>Patient</th><th>Status</th><th>Time</th></tr></thead><tbody>${rows.map((v) => `<tr><td>${patientName(v.patientId)}<div class="hint mono">${v.voucherNo}</div></td><td><span class="badge amber">${v.status}</span></td><td>${fmtTime(v.date)}</td></tr>`).join("")}</tbody></table>` : empty("No active queue"); }
-function clinicalFormHtml(v) { return `<h2>${patientName(v.patientId)} <span class="badge ${v.status === "done" ? "green" : "teal"}">${v.status}</span></h2><p class="hint mono">${v.voucherNo}</p><form id="clinicalVitals" class="grid cols-4" style="margin-top:14px">${field("wt", "Weight kg", "number", false, v.vitals?.wt || "")}${field("ht", "Height cm", "number", false, v.vitals?.ht || "")}${field("temp", "Temp F", "number", false, v.vitals?.temp || "")}${field("pulse", "Pulse", "number", false, v.vitals?.pulse || "")}</form><div class="field" style="margin-top:12px"><label>Notes</label><textarea id="clinicalNotes">${escapeHtml(v.notes || "")}</textarea></div><div class="toolbar" style="margin-top:14px"><h3>Prescription</h3><button class="btn secondary" id="addRx">Add drug</button></div><div id="rxRows" class="grid">${(v.prescription || []).map(rxRowHtml).join("") || rxRowHtml({})}</div><div class="toolbar" style="margin-top:14px"><button class="btn" id="saveClinical">Save clinical & mark done</button><button class="btn secondary" id="printPrescription">Print prescription</button></div>`; }
+function clinicalFormHtml(v) { return `<h2>${patientName(v.patientId)} <span class="badge ${v.status === "done" ? "green" : "teal"}">${v.status}</span></h2><p class="hint mono">${v.voucherNo}</p><form id="clinicalVitals" class="grid cols-4" style="margin-top:14px">${field("wt", "Weight kg", "number", false, v.vitals?.wt || "")}${field("ht", "Height cm", "number", false, v.vitals?.ht || "")}${field("temp", "Temp F", "number", false, v.vitals?.temp || "")}${field("pulse", "Pulse", "number", false, v.vitals?.pulse || "")}</form><div class="field" style="margin-top:12px"><label>Notes</label><textarea id="clinicalNotes">${escapeHtml(v.notes || "")}</textarea></div><div class="grid cols-2" style="margin-top:12px">${field("followUpDate", "Follow-up date", "date", false, v.followUpDate || "")}${field("followUpReason", "Follow-up reason", "text", false, v.followUpReason || "")}</div><div class="toolbar" style="margin-top:14px"><h3>Prescription</h3><button class="btn secondary" id="addRx">Add drug</button></div><div id="rxRows" class="grid">${(v.prescription || []).map(rxRowHtml).join("") || rxRowHtml({})}</div><div class="toolbar" style="margin-top:14px"><button class="btn" id="saveClinical">Save clinical & mark done</button><button class="btn secondary" id="printPrescription">Print prescription</button></div>`; }
 function rxRowHtml(r = {}) { return `<div data-rx-row class="grid cols-5"><div class="field"><label>Drug</label><select name="drugId"><option value="">Text only</option>${state.data.drugs.map((d) => `<option value="${d.id}" ${r.drugId === d.id ? "selected" : ""}>${escapeHtml(d.name)}</option>`).join("")}</select></div><div class="field"><label>Dose</label><input name="dose" value="${escapeHtml(r.dose || "")}"></div><div class="field"><label>Frequency</label><input name="frequency" value="${escapeHtml(r.frequency || "")}"></div><div class="field"><label>Days</label><input name="days" type="number" value="${r.days || ""}"></div><div class="field"><label>Qty</label><input name="qty" type="number" value="${r.qty || 1}"></div></div>`; }
 function saleRowHtml(row = {}) {
   const selectedDrugId = row.drugId || state.data.drugs[0]?.id || "";
@@ -746,7 +834,7 @@ function simpleTable(rows, fields) { return `<table><thead><tr>${fields.map((f) 
 function patientMasterTable(rows) { return `<table><thead><tr><th>UHID</th><th>Name</th><th>Mobile</th><th>Guardian</th></tr></thead><tbody>${rows.map((p) => `<tr><td class="mono">${p.uhid}</td><td>${escapeHtml(p.firstName)} ${escapeHtml(p.lastName)}</td><td>${p.mobile}</td><td>${escapeHtml(p.guardian.name)}</td></tr>`).join("")}</tbody></table>`; }
 
 function field(name, label, type = "text", required = false, value = "") { return `<div class="field"><label>${label}${required ? " *" : ""}</label><input name="${name}" type="${type}" value="${escapeHtml(String(value))}" ${required ? "required" : ""}></div>`; }
-function formValues(formId) { const form = byId(formId); return Object.fromEntries([...form.querySelectorAll("input,select,textarea")].map((el) => [el.name || el.id, el.value])); }
+function formValues(formId) { const form = byId(formId); return Object.fromEntries([...form.querySelectorAll("input,select,textarea")].map((el) => [el.name || el.id, el.type === "checkbox" ? el.checked : el.value])); }
 function byId(id) { return document.getElementById(id); }
 function empty(text) { return `<div class="empty">${text}</div>`; }
 function rupee(n) { return INR.format(Number(n) || 0); }
@@ -766,9 +854,7 @@ function supplierName(id) { return escapeHtml(state.data.suppliers.find((s) => s
 function userName(id) { return escapeHtml(state.data.users.find((u) => u.id === id)?.name || id || ""); }
 function title(s) { return String(s).replace(/[-_]/g, " ").replace(/\b\w/g, (m) => m.toUpperCase()); }
 function age(dob) { const ms = Date.now() - new Date(dob); const y = Math.floor(ms / 31557600000); if (y > 0) return `${y}y`; return `${Math.max(0, Math.floor(ms / 2629800000))}m`; }
-function ageMonths(dob) { return Math.max(0, Math.floor((Date.now() - new Date(dob)) / 2629800000)); }
 function latestWeight(patient) { return patient?.weights?.length ? patient.weights.at(-1).w : 0; }
-function roundDose(n) { return Math.round((Number(n) || 0) * 10) / 10; }
 function numToWordsINR(value) {
   const n = Math.round(Number(value) || 0);
   if (n === 0) return "Zero";
