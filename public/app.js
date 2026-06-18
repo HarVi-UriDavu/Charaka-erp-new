@@ -429,13 +429,13 @@ function openMasterDialog(tab) {
       title: "Add service",
       endpoint: "/api/admin/services",
       success: "Service added",
-      body: `<form id="masterForm" class="grid cols-2">${field("code", "Code", "text", true)}${field("name", "Service name", "text", true)}${field("category", "Category", "text", false, "OPD")}${field("rate", "Rate", "number", true, "0")}${field("gst", "GST %", "number", false, "0")}</form>`
+      body: `<form id="masterForm" class="grid cols-2">${field("code", "Code", "text", true)}${field("name", "Service name", "text", true)}${selectField("category", "Category", ["OPD", "Procedure", "Vaccine", "Admin"], "OPD")}${field("rate", "Rate", "number", true, "0")}${selectField("gst", "GST %", ["0", "5", "12", "18"], "0")}</form>`
     },
     drugs: {
       title: "Add drug",
       endpoint: "/api/admin/drugs",
       success: "Drug added",
-      body: `<form id="masterForm" class="grid cols-2">${field("name", "Drug name", "text", true)}${field("form", "Form", "text", false, "Syrup")}${field("pack", "Pack", "text", false, "60 ml")}${field("hsn", "HSN", "text")}${field("mrp", "MRP", "number", true, "0")}${field("gst", "GST %", "number", false, "12")}${field("reorderLevel", "Low-stock alert qty", "number", false, "10")}</form>`
+      body: `<form id="masterForm" class="grid cols-2">${field("name", "Drug name", "text", true)}${selectField("form", "Form", ["Syrup", "Drops", "Suspension", "Tablet", "Capsule", "Sachet", "Injection", "Cream", "Ointment", "Inhaler"], "Syrup")}${field("pack", "Pack", "text", false, "60 ml")}${field("hsn", "HSN", "text")}${field("mrp", "MRP", "number", true, "0")}${selectField("gst", "GST %", ["0", "5", "12", "18"], "12")}${field("reorderLevel", "Low-stock alert qty", "number", false, "10")}</form>`
     },
     suppliers: {
       title: "Add supplier",
@@ -517,8 +517,8 @@ function openPatientDialog() {
       <div class="field"><label>Gender</label><select name="gender"><option value="M">Boy</option><option value="F">Girl</option></select></div>
       ${field("mobile", "Mobile", "tel", true)}
       ${field("guardianName", "Guardian name", "text", true)}
-      ${field("guardianRel", "Guardian relation", "text", false, "S/o")}
-      ${field("bloodGroup", "Blood group")}
+      ${selectField("guardianRel", "Guardian relation", ["S/o", "D/o", "C/o", "M/o", "F/o"], "S/o")}
+      ${selectField("bloodGroup", "Blood group", ["", "A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"], "")}
       <div class="field" style="grid-column:1/-1"><label>Address</label><textarea name="address"></textarea></div>
       <div class="field" style="grid-column:1/-1"><label>Allergies</label><input name="allergies" placeholder="Nil known"></div>
       <div class="field"><label>WhatsApp language</label><select name="whatsappLanguage"><option value="en">English</option><option value="te">Telugu</option></select></div>
@@ -690,7 +690,7 @@ function openReturnDialog() {
   openDialog("New sales return", `
     <form id="returnForm" class="grid">
       <div class="field"><label>Sale</label><select name="saleId">${state.data.pharmacySales.map((s) => `<option value="${s.id}">${s.voucherNo} - ${rupee(s.total)}</option>`).join("")}</select></div>
-      <div class="field"><label>Reason</label><input name="reason" value="Returned by patient"></div>
+      ${selectField("reason", "Reason", ["Returned by patient", "Damaged pack", "Wrong item supplied", "Adverse reaction", "Other"], "Returned by patient")}
       <p class="hint">First implementation returns one unit of the first item from the selected sale.</p>
     </form>`, `<button class="btn secondary" data-close>Cancel</button><button class="btn" id="saveReturn">Save return</button>`);
   byId("saveReturn").addEventListener("click", async () => {
@@ -802,8 +802,8 @@ function patientListItem(p, active) { return `<button class="list-item ${active 
 function patientText(p) { return `${p.uhid} ${p.firstName} ${p.lastName} ${p.mobile} ${p.guardian.name}`.toLowerCase(); }
 function visitQueueItem(v, active) { const p = state.data.patients.find((x) => x.id === v.patientId); return `<button class="list-item ${active ? "active" : ""}" data-visit="${v.id}"><strong>${patientName(v.patientId)}</strong> <span class="badge ${v.status === "done" ? "green" : v.status === "waiting" ? "amber" : "teal"}">${v.status}</span><div class="hint mono">${v.voucherNo}</div><div class="hint">${p ? age(p.dob) : ""} - ${fmtTime(v.date)} - ${rupee(v.total)}</div></button>`; }
 function queueTable(rows) { return rows.length ? `<table><thead><tr><th>Patient</th><th>Status</th><th>Time</th></tr></thead><tbody>${rows.map((v) => `<tr><td>${patientName(v.patientId)}<div class="hint mono">${v.voucherNo}</div></td><td><span class="badge amber">${v.status}</span></td><td>${fmtTime(v.date)}</td></tr>`).join("")}</tbody></table>` : empty("No active queue"); }
-function clinicalFormHtml(v) { return `<h2>${patientName(v.patientId)} <span class="badge ${v.status === "done" ? "green" : "teal"}">${v.status}</span></h2><p class="hint mono">${v.voucherNo}</p><form id="clinicalVitals" class="grid cols-4" style="margin-top:14px">${field("wt", "Weight kg", "number", false, v.vitals?.wt || "")}${field("ht", "Height cm", "number", false, v.vitals?.ht || "")}${field("temp", "Temp F", "number", false, v.vitals?.temp || "")}${field("pulse", "Pulse", "number", false, v.vitals?.pulse || "")}</form><div class="field" style="margin-top:12px"><label>Notes</label><textarea id="clinicalNotes">${escapeHtml(v.notes || "")}</textarea></div><div class="grid cols-2" style="margin-top:12px">${field("followUpDate", "Follow-up date", "date", false, v.followUpDate || "")}${field("followUpReason", "Follow-up reason", "text", false, v.followUpReason || "")}</div><div class="toolbar" style="margin-top:14px"><h3>Prescription</h3><button class="btn secondary" id="addRx">Add drug</button></div><div id="rxRows" class="grid">${(v.prescription || []).map(rxRowHtml).join("") || rxRowHtml({})}</div><div class="toolbar" style="margin-top:14px"><button class="btn" id="saveClinical">Save clinical & mark done</button><button class="btn secondary" id="printPrescription">Print prescription</button></div>`; }
-function rxRowHtml(r = {}) { return `<div data-rx-row class="grid cols-5"><div class="field"><label>Drug</label><select name="drugId"><option value="">Text only</option>${state.data.drugs.map((d) => `<option value="${d.id}" ${r.drugId === d.id ? "selected" : ""}>${escapeHtml(d.name)}</option>`).join("")}</select></div><div class="field"><label>Dose</label><input name="dose" value="${escapeHtml(r.dose || "")}"></div><div class="field"><label>Frequency</label><input name="frequency" value="${escapeHtml(r.frequency || "")}"></div><div class="field"><label>Days</label><input name="days" type="number" value="${r.days || ""}"></div><div class="field"><label>Qty</label><input name="qty" type="number" value="${r.qty || 1}"></div></div>`; }
+function clinicalFormHtml(v) { return `<h2>${patientName(v.patientId)} <span class="badge ${v.status === "done" ? "green" : "teal"}">${v.status}</span></h2><p class="hint mono">${v.voucherNo}</p><form id="clinicalVitals" class="grid cols-4" style="margin-top:14px">${field("wt", "Weight kg", "number", false, v.vitals?.wt || "")}${field("ht", "Height cm", "number", false, v.vitals?.ht || "")}${field("temp", "Temp F", "number", false, v.vitals?.temp || "")}${field("pulse", "Pulse", "number", false, v.vitals?.pulse || "")}</form><div class="field" style="margin-top:12px"><label>Notes</label><textarea id="clinicalNotes">${escapeHtml(v.notes || "")}</textarea></div><div class="grid cols-2" style="margin-top:12px">${field("followUpDate", "Follow-up date", "date", false, v.followUpDate || "")}${selectField("followUpReason", "Follow-up reason", ["", "Review", "Symptom reassessment", "Medication review", "Report review", "Vaccine follow-up"], v.followUpReason || "")}</div><div class="toolbar" style="margin-top:14px"><h3>Prescription</h3><button class="btn secondary" id="addRx">Add drug</button></div><div id="rxRows" class="grid">${(v.prescription || []).map(rxRowHtml).join("") || rxRowHtml({})}</div><div class="toolbar" style="margin-top:14px"><button class="btn" id="saveClinical">Save clinical & mark done</button><button class="btn secondary" id="printPrescription">Print prescription</button></div>`; }
+function rxRowHtml(r = {}) { return `<div data-rx-row class="grid cols-5"><div class="field"><label>Drug</label><select name="drugId"><option value="">Text only</option>${state.data.drugs.map((d) => `<option value="${d.id}" ${r.drugId === d.id ? "selected" : ""}>${escapeHtml(d.name)}</option>`).join("")}</select></div>${selectField("dose", "Dose", ["", "1/4 tablet", "1/2 tablet", "1 tablet", "2.5 ml", "5 ml", "7.5 ml", "10 ml", "As directed"], r.dose || "")}${selectField("frequency", "Frequency", ["", "OD", "BD", "TID", "QID", "SOS", "HS"], r.frequency || "")}${selectField("days", "Days", ["", "1", "2", "3", "5", "7", "10", "14", "30"], r.days || "")}<div class="field"><label>Qty</label><input name="qty" type="number" value="${r.qty || 1}"></div></div>`; }
 function saleRowHtml(row = {}) {
   const selectedDrugId = row.drugId || state.data.drugs[0]?.id || "";
   return `<div data-sale-row class="grid cols-3" style="margin-bottom:10px"><div class="field"><label>Drug</label><select name="drugId">${state.data.drugs.map((d) => `<option value="${d.id}" ${selectedDrugId === d.id ? "selected" : ""}>${escapeHtml(d.name)}</option>`).join("")}</select></div><div class="field"><label>Batch</label><select name="batchId">${batchOptionsHtml(selectedDrugId, row.batchId)}</select></div><div class="field"><label>Qty</label><input name="qty" type="number" value="${row.qty || 1}" min="1"></div></div>`;
@@ -834,6 +834,11 @@ function simpleTable(rows, fields) { return `<table><thead><tr>${fields.map((f) 
 function patientMasterTable(rows) { return `<table><thead><tr><th>UHID</th><th>Name</th><th>Mobile</th><th>Guardian</th></tr></thead><tbody>${rows.map((p) => `<tr><td class="mono">${p.uhid}</td><td>${escapeHtml(p.firstName)} ${escapeHtml(p.lastName)}</td><td>${p.mobile}</td><td>${escapeHtml(p.guardian.name)}</td></tr>`).join("")}</tbody></table>`; }
 
 function field(name, label, type = "text", required = false, value = "") { return `<div class="field"><label>${label}${required ? " *" : ""}</label><input name="${name}" type="${type}" value="${escapeHtml(String(value))}" ${required ? "required" : ""}></div>`; }
+function selectField(name, label, options, value = "", required = false) {
+  const selected = String(value ?? "");
+  const values = [...new Set([...options.map(String), ...(selected && !options.map(String).includes(selected) ? [selected] : [])])];
+  return `<div class="field"><label>${label}${required ? " *" : ""}</label><select name="${name}" ${required ? "required" : ""}>${values.map((option) => `<option value="${escapeHtml(option)}" ${option === selected ? "selected" : ""}>${escapeHtml(option || "None")}</option>`).join("")}</select></div>`;
+}
 function formValues(formId) { const form = byId(formId); return Object.fromEntries([...form.querySelectorAll("input,select,textarea")].map((el) => [el.name || el.id, el.type === "checkbox" ? el.checked : el.value])); }
 function byId(id) { return document.getElementById(id); }
 function empty(text) { return `<div class="empty">${text}</div>`; }
